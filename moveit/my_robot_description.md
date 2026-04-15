@@ -21,7 +21,7 @@
 1. Open package from VC Code. Run this from WSL2 Ubuntu, and allow reopenning within container:
 
     ```BASH
-    cd ~/code/python-bootcamp/moveit/ur3_ws && code .
+    cd ~/code/ur3e/moveit && code .
     ```
 
 1. Edit `my_robot_description/CMakeLists.txt` 

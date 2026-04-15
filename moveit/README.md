@@ -23,10 +23,10 @@
 1. Start first container instance from bash:
 
     ```BASH
-    cd ~/code/python-bootcamp/moveit/ur3_ws/ && ./start_ur3.sh
+    cd ~/code/ur3e/moveit/ && ./start_ur3.sh
 
     # To open additional shells on same container
-    docker exec -it moveit2_ur3_v2_container /bin/bash
+    docker exec -it moveit2_ur3_container /bin/bash
     ```
 
 1. Inside docker container, launch camera node:
@@ -47,13 +47,13 @@
     VS Code will automatially prompt to reopen from the Container.
 
     ```BASH
-    cd ~/code/python-bootcamp/moveit/ur3_ws && code .
+    cd ~/code/ur3e/moveit && code .
     ```
 
 1. Start additional docker container bash:
 
     ```BASH
-    docker exec -it moveit2_ur3_v2_container /bin/bash
+    docker exec -it moveit2_ur3_container /bin/bash
     ```
 
     ...build our setup
@@ -115,11 +115,10 @@
     * Click Ok
 
 
-## Notes
+### Notes
 
 - "Failed to connect to robot on IP 192.168.0.1" error is normal — ignore it
-- Save all code to /root/ur3_ws inside the container
-- This maps to ~/code/python-bootcamp/moveit/ur3_ws on your machine
+- This maps to ~/code/ur3e/moveit on your machine
 - Files saved anywhere else in the container will be lost on exit
 - Test cemara with: `realsense-viewer`
 
@@ -130,7 +129,7 @@
 1. Create docker image:
 
     ```BASH
-     cd ~/code/python-bootcamp/moveit/ur3_ws/
+     cd ~/code/ur3e/moveit/
      docker build  -t moveit2_ur3_v2  .
     ```
 
@@ -139,10 +138,10 @@
 1. Create docker container and start it:
 
     ```bash
-    cd ~/code/python-bootcamp/moveit/ur3_ws/ && ./setup_ur3.sh
+    cd ~/code/ur3e/moveit/ && ./setup_ur3.sh
     ```
 
-    Docker will now have a permanent container instance named `moveit2_ur3_v2_container`.
+    Docker will now have a permanent container instance named `moveit2_ur3_container`.
 
 
 1. Install `lsusb` on the docker image, that allows you to troubleshoot camera issues:
@@ -175,7 +174,7 @@ This is complicated by the fact that `ws_moveit` is already included within the 
 1. Update `setup_ur3.sh` to include a volume mapping for `ws_moveit`:
 
     ```
-      -v ~/code/python-bootcamp/moveit/ur3_ws/ws_moveit:/root/ws_moveit
+      -v ~/code/ur3e/moveit/ws_moveit:/root/ws_moveit
     ```
 
 1. Create `.devcontainer/devcontainer.json` configuration file. This will tell the VS Code Dev Container extension, how to switch to the Docker Container rahter than running as if coding on the host.
@@ -183,15 +182,15 @@ This is complicated by the fact that `ws_moveit` is already included within the 
 1. Create docker container and start it:
 
     ```bash
-     ~/code/python-bootcamp/moveit/ur3_ws/setup_ur3.sh
+     ~/code/ur3e/moveit/setup_ur3.sh
     ```
 
-    Docker will now have a permanent container instance named `moveit2_ur3_v2_container`.
+    Docker will now have a permanent container instance named `moveit2_ur3_container`.
 
 1. Open VS Code at the folder where `.devcontainer` is located. VS Code will automatially prompt to reopen from the Container.
 
     ```BASH
-    cd ~/code/python-bootcamp/moveit/ur3_ws && code .
+    cd ~/code/ur3e/moveit && code .
     ```
 
 ## Other

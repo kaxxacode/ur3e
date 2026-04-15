@@ -1,7 +1,7 @@
 services:
   moveit_dev:
     image: moveit2_ur3_v2
-    container_name: moveit2_ur3_v2_container
+    container_name: moveit2_ur3_container
     build:
       context: .
       dockerfile: Dockerfile

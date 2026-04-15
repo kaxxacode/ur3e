@@ -30,7 +30,7 @@ except ImportError:
         "        Run: pip install pyrealsense2 --break-system-packages"
     )
 
-OUTPUT_DIR  = os.path.expanduser("~/code/python-bootcamp/ur_controller/dataset/images")
+OUTPUT_DIR  = os.path.expanduser("~/code/ur3e/ur_controller/dataset/images")
 TARGET      = 300    # total images to capture
 INTERVAL_S  = 0.2     # seconds between captures (0.2 = 5 per second)
 

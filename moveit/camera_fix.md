@@ -16,7 +16,7 @@ working and one with the changes to get the robot connectivity
 named as follows:
 
 * `camera_last_working_container` - container using files that had the camera working
-* `moveit2_ur3_v2_container` - container with updates for robot access
+* `moveit2_ur3_container` - container with updates for robot access
 
 Keep in mind that none of these are working today.
 

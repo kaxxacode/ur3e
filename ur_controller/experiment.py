@@ -10,7 +10,7 @@ import os
 
 # ── Configuration ─────────────────────────────────────────────
 ROBOT_IP = "192.168.1.102"
-WEIGHTS  = "/home/nathan/code/python-bootcamp/ur_controller/best.pt"
+WEIGHTS  = "/home/nathan/code/ur3e/ur_controller/best.pt"
 
 # Fixed orientation for all moves
 ORI = [2.235, -2.201, 0.018]
@@ -209,7 +209,7 @@ def camera_to_base(pt_cam, tcp_z_mm):
     return np.array([base_x, base_y, base_z])
 
 # ── Data log ──────────────────────────────────────────────────
-log_file     = "/home/nathan/code/python-bootcamp/ur_controller/results.csv"
+log_file     = "/home/nathan/code/ur3e/ur_controller/results.csv"
 write_header = not os.path.exists(log_file)
 
 def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):

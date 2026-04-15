@@ -4,12 +4,12 @@
 ## Detecting towers
 
 ```BASH
-python3 ~/code/python-bootcamp/ur_controller/detect_towers.py --model ~/code/python-bootcamp/ur_controller/best.pt
+python3 ~/code/ur3e/ur_controller/detect_towers.py --model ~/code/ur3e/ur_controller/best.pt
 ```
 
 
 ```bash
-cat > ~/code/python-bootcamp/moveit/ur3_ws/NETWORK_SETUP.md << 'EOF'
+cat > ~/code/ur3e/moveit/NETWORK_SETUP.md << 'EOF'
 # Network Setup Guide — UR3e Robot Connection
 
 ## Overview
