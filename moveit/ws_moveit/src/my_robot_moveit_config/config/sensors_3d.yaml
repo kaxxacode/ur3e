@@ -1,0 +1,16 @@
+move_group:
+  ros__parameters:
+    sensors: ["point_cloud"]
+    octomap_resolution: 0.001
+    octomap_frame: world
+    point_cloud:
+      sensor_plugin: occupancy_map_monitor/PointCloudOctomapUpdater
+      point_cloud_topic: /camera/camera/depth/color/points
+      sensor_frame: camera_depth_optical_frame
+      max_range: 0.50
+      point_subsample: 1
+      max_update_rate: 0.5
+      request_delta_timeout: 0.5
+      padding_offset: 0.05
+      padding_scale: 1.0
+      filtered_cloud_topic: filtered_cloud

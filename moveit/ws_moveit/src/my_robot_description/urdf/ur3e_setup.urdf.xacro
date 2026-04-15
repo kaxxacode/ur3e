@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="ur3e_with_vision">
+
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+
+  <xacro:arg name="name" default="ur3e"/>
+  <xacro:arg name="ur_type" default="ur3e"/>
+  <xacro:arg name="tf_prefix" default=""/>
+
+  <material name="Grey">
+    <color rgba="0.5 0.5 0.5 1.0"/>
+  </material>
+  <material name="Blue">
+    <color rgba="0.0 0.0 0.8 1.0"/>
+  </material>
+
+  <link name="world"/>
+  <xacro:ur_robot
+    name="$(arg name)"
+    tf_prefix="$(arg tf_prefix)"
+    parent="world"
+    joint_limits_parameters_file="$(find ur_description)/config/$(arg ur_type)/joint_limits.yaml"
+    kinematics_parameters_file="$(find ur_description)/config/$(arg ur_type)/default_kinematics.yaml"
+    physical_parameters_file="$(find ur_description)/config/$(arg ur_type)/physical_parameters.yaml"
+    visual_parameters_file="$(find ur_description)/config/$(arg ur_type)/visual_parameters.yaml">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </xacro:ur_robot>
+
+  <link name="tcp_printed_part">
+    <visual>
+      <geometry>
+        <mesh filename="package://my_robot_description/meshes/tcp_holder.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="Grey"/>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://my_robot_description/meshes/tcp_holder.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="flange_to_tcp" type="fixed">
+    <parent link="tool0"/>
+    <child link="tcp_printed_part"/>
+    <origin xyz="0 0 0.015" rpy="${pi/2} 0 ${pi}"/> 
+  </joint>
+
+  <link name="camera_holder">
+    <visual>
+      <geometry>
+        <mesh filename="package://my_robot_description/meshes/camera_holder.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="Blue"/>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://my_robot_description/meshes/camera_holder.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="tcp_to_holder" type="fixed">
+    <parent link="tcp_printed_part"/>
+    <child link="camera_holder"/>
+    <origin xyz="0 -0.033 0.065" rpy="0 0 0"/> 
+  </joint>
+
+
+  <link name="camera_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.023 0.042 0.042"/>
+      </geometry>
+      <material name="Grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.023 0.042 0.042"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="holder_to_camera" type="fixed">
+    <parent link="camera_holder"/>
+    <child link="camera_link"/>
+    <origin xyz="0 0.0215 0" rpy="0 0 ${pi/2}"/>
+  </joint>
+  <!-- ros2_control hardware interface -->
+  <ros2_control name="ur3e" type="system">
+    <hardware>
+      <plugin>ur_robot_driver/URPositionHardwareInterface</plugin>
+      <param name="robot_ip">192.168.1.102</param>
+      <param name="output_recipe_filename">/root/ws_moveit/install/ur_robot_driver/share/ur_robot_driver/resources/rtde_output_recipe.txt</param>
+      <param name="input_recipe_filename">/root/ws_moveit/install/ur_robot_driver/share/ur_robot_driver/resources/rtde_input_recipe.txt</param>
+      <param name="reverse_ip">192.168.1.10</param>
+      <param name="reverse_port">50001</param>
+      <param name="script_sender_port">50002</param>
+      <param name="trajectory_port">50003</param>
+      <param name="script_command_port">50004</param>
+      <param name="tf_prefix"></param>
+      <param name="non_blocking_read">true</param>
+      <param name="keep_alive_count">5</param>
+      <param name="servoj_gain">2000</param>
+      <param name="servoj_lookahead_time">0.03</param>
+      <param name="use_tool_communication">false</param>
+      <param name="kinematics/hash">calib_16756443741236045476</param>
+    </hardware>
+    <joint name="shoulder_pan_joint">
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="shoulder_lift_joint">
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="elbow_joint">
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="wrist_1_joint">
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="wrist_2_joint">
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+    <joint name="wrist_3_joint">
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+  </ros2_control>
+</robot>

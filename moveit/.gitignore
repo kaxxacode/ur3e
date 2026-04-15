@@ -1,0 +1,22 @@
+# 1. Allow the directory itself to be scanned
+ws_moveit/*
+
+# 2. Re-ignore everything inside it
+ws_moveit/**/*
+
+# 3. Create the exception path
+!ws_moveit/my_scripts
+!ws_moveit/my_scripts/**
+
+!ws_moveit/src/
+!ws_moveit/src/my_robot_description/
+!ws_moveit/src/my_robot_description/**
+
+!ws_moveit/src/my_robot_moveit_config
+!ws_moveit/src/my_robot_moveit_config/**
+
+# Training model data
+best.pt
+best.pt:Zone.Identifier
+dataset
+results.csv

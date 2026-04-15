@@ -1,0 +1,24 @@
+{
+    "name": "MoveIt 2 UR3 Development",
+    "dockerComposeFile": "../docker-compose.yml",
+    "service": "moveit_dev",
+    "workspaceFolder": "/root/ws_moveit",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "ms-iot.vscode-ros",
+                "twister883.cpp-automake-annotations",
+                "ethan-hurwitz.cpp-include-guard",
+                "ms-vscode.cmake-tools"
+            ]
+        }
+    },
+    "remoteUser": "root",
+
+    // Ensure the ROS environment is sourced for the terminal
+    "remoteEnv": {
+        "ROS_DISTRO": "jazzy"
+    }
+}

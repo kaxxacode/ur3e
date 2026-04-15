@@ -1,0 +1,28 @@
+services:
+  moveit_dev:
+    image: moveit2_ur3_v2
+    container_name: moveit2_ur3_v2_container
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: true
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /dev/bus/usb:/dev/bus/usb
+      - ./ws_moveit:/root/ws_moveit
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ROS_DISTRO=jazzy
+    stdin_open: true 
+    tty: true
+    # network_mode: host
+    ports:
+      # UR3e Robot Control Interfaces
+      - "30001-30004:30001-30004"
+      - "29999:29999"
+      
+      # ROS 2 External Control & MoveIt Communication
+      - "50001-50004:50001-50004"
+      
+      # ROS 2 DDS Discovery (Required for ROS nodes to see each other)
+      - "7400-7500:7400-7500/udp"    

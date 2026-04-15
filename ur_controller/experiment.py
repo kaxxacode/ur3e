@@ -1,0 +1,361 @@
+import pyrealsense2 as rs
+import numpy as np
+import cv2
+import time
+from ultralytics import YOLO
+import rtde_control
+import rtde_receive
+import csv
+import os
+
+# ── Configuration ─────────────────────────────────────────────
+ROBOT_IP = "192.168.1.102"
+WEIGHTS  = "/home/nathan/code/python-bootcamp/ur_controller/best.pt"
+
+# Fixed orientation for all moves
+ORI = [2.235, -2.201, 0.018]
+
+# Home position — camera 0,0 above part 0,0 at 30cm height
+HOME = [81.0, -305.0, 383.0, 2.235, -2.201, 0.018]
+
+# Approach positions (mm, radians) — BASE FRAME
+APPROACH_XY = [114.31, -261.46, 93.41,  2.235, -2.201, 0.018]
+SAFE_Z      = [109.43, -255.09, 268.02, 2.235, -2.201, 0.018]
+APPROACH_Z  = [219.96, -335.28, 239.23, 2.235, -2.201, 0.018]
+
+# Known zero positions in base frame (mm, radians)
+PROBE_X = [142.78, -261.45, 93.42,  2.235, -2.201, 0.018]
+PROBE_Y = [114.31, -276.97, 93.40,  2.235, -2.201, 0.018]
+PROBE_Z = [219.97, -335.28, 216.91, 2.235, -2.201, 0.018]
+
+# Known probe positions in base frame (mm)
+KNOWN_PROBE_X = np.array([142.78, -261.45,  93.42])
+KNOWN_PROBE_Y = np.array([114.31, -276.97,  93.40])
+KNOWN_PROBE_Z = np.array([219.97, -335.28, 216.91])
+
+# Part 0,0 in base frame (mm)
+PART_ORIGIN = np.array([9.0, -305.0, 88.9])
+
+# Known tower positions in base frame (mm)
+TOWER_KNOWN_POS = {
+    "12": np.array([ -16.0, -287.5,  68.0]),
+    "17": np.array([  26.5, -287.5,  73.0]),
+    "22": np.array([  -1.0, -322.5,  78.0]),
+    "27": np.array([  26.5, -322.5,  83.0]),
+}
+
+# Tower class names for detection
+TOWERS = list(TOWER_KNOWN_POS.keys())
+
+# Tallest tower top Z in base frame (mm)
+TALLEST_TOP_Z = 83.0
+
+# Test heights above tallest tower (mm) — 10cm to 30cm
+TEST_HEIGHTS = [100, 150, 200, 250, 300]
+
+# Observation X, Y (mm) — camera 0,0 above part 0,0
+OBS_X = 81.0
+OBS_Y = -305.0
+
+# Camera offset from flange (mm)
+CAM_Z_OFFSET = 15.0  # camera is 15mm below flange
+EXT_LENGTH   = 35.0  # extrusion tip is 35mm below flange
+
+# Speeds
+SPEED      = 0.05  # 50 mm/s probe moves
+SPEED_HOME = 0.2   # 200 mm/s home/transit moves
+ACCEL      = 1.2   # m/s^2
+
+# ── Helper ────────────────────────────────────────────────────
+def to_rtde_pose(pos_mm_rad):
+    return [
+        pos_mm_rad[0] / 1000,
+        pos_mm_rad[1] / 1000,
+        pos_mm_rad[2] / 1000,
+        pos_mm_rad[3],
+        pos_mm_rad[4],
+        pos_mm_rad[5],
+    ]
+
+# ── Robot connection ──────────────────────────────────────────
+print("Connecting to robot...")
+rtde_c = rtde_control.RTDEControlInterface(ROBOT_IP)
+rtde_r = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
+print("Connected.")
+
+def move_to(pos_mm_rad, speed=SPEED):
+    pose = to_rtde_pose(pos_mm_rad)
+    rtde_c.moveL(pose, speed, ACCEL)
+
+def go_home():
+    print("  Moving to home...")
+    move_to(HOME, speed=SPEED_HOME)
+
+def get_tcp_z():
+    pose = rtde_r.getActualTCPPose()
+    return pose[2] * 1000  # metres to mm
+
+# ── Camera setup ──────────────────────────────────────────────
+pipeline = rs.pipeline()
+config   = rs.config()
+config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
+config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16,  30)
+profile  = pipeline.start(config)
+
+intr  = (profile.get_stream(rs.stream.color)
+         .as_video_stream_profile().get_intrinsics())
+align = rs.align(rs.stream.color)
+
+# ── YOLOv11 ───────────────────────────────────────────────────
+model = YOLO(WEIGHTS)
+
+# ── Live feed ─────────────────────────────────────────────────
+def show_live_feed(duration=15):
+    print("  Live feed — SPACE to continue, Q to skip height")
+    start = time.time()
+    while True:
+        frames      = pipeline.wait_for_frames()
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            continue
+        img       = np.asanyarray(color_frame.get_data())
+        results   = model(img, verbose=False)[0]
+        annotated = results.plot()
+        n_det     = len(results.boxes)
+        elapsed   = time.time() - start
+        cv2.putText(annotated,
+                    f"Detections: {n_det}  |  {elapsed:.1f}s / {duration}s",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(annotated,
+                    "SPACE = continue  |  Q = skip height",
+                    (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+        cv2.imshow("Live Detection", annotated)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord(' '):
+            cv2.destroyAllWindows()
+            return True
+        elif key == ord('q'):
+            cv2.destroyAllWindows()
+            return False
+        if elapsed > duration:
+            cv2.destroyAllWindows()
+            return True
+
+# ── Tower detection ───────────────────────────────────────────
+def flush_pipeline(n=10):
+    for _ in range(n):
+        pipeline.wait_for_frames()
+
+def get_depth_at_pixel(depth_frame, cx, cy, window=5):
+    depths = []
+    for dx in range(-window, window+1):
+        for dy in range(-window, window+1):
+            px, py = cx + dx, cy + dy
+            if 0 <= px < 1280 and 0 <= py < 720:
+                d = depth_frame.get_distance(px, py)
+                if d > 0:
+                    depths.append(d)
+    if len(depths) == 0:
+        return 0
+    return float(np.median(depths))
+
+def detect_towers(n_frames=10):
+    flush_pipeline()
+    detections = {k: [] for k in TOWERS}
+    for _ in range(n_frames):
+        frames      = pipeline.wait_for_frames()
+        frames      = align.process(frames)
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
+        if not color_frame or not depth_frame:
+            continue
+        img     = np.asanyarray(color_frame.get_data())
+        results = model(img, verbose=False)[0]
+        for box in results.boxes:
+            cls_name = model.names[int(box.cls)]
+            if cls_name not in TOWERS:
+                continue
+            cx = int((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
+            cy = int((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
+            z  = get_depth_at_pixel(depth_frame, cx, cy, window=5)
+            if z == 0:
+                print(f"    WARNING: zero depth for {cls_name} at ({cx},{cy})")
+                continue
+            x = (cx - intr.ppx) * z / intr.fx
+            y = (cy - intr.ppy) * z / intr.fy
+            detections[cls_name].append([x, y, z])
+    result = {}
+    for cls_name, pts in detections.items():
+        if len(pts) >= 7:
+            result[cls_name] = np.median(pts, axis=0)
+            print(f"    {cls_name} camera frame: "
+                  f"x={result[cls_name][0]:.4f} "
+                  f"y={result[cls_name][1]:.4f} "
+                  f"z={result[cls_name][2]:.4f} metres")
+        else:
+            print(f"    WARNING: only {len(pts)} valid frames for {cls_name}")
+    return result
+
+def camera_to_base(pt_cam, tcp_z_mm):
+    """
+    Camera 0,0 is directly above part 0,0.
+    X, Y from camera frame with Y flipped.
+    Z from depth reading corrected for camera height and extrusion offset.
+    """
+    base_x = PART_ORIGIN[0] + pt_cam[0] * 1000
+    base_y = PART_ORIGIN[1] + (-pt_cam[1]) * 1000
+    camera_z_mm = tcp_z_mm - CAM_Z_OFFSET
+    base_z = camera_z_mm - pt_cam[2] * 1000 + EXT_LENGTH
+    return np.array([base_x, base_y, base_z])
+
+# ── Data log ──────────────────────────────────────────────────
+log_file     = "/home/nathan/code/python-bootcamp/ur_controller/results.csv"
+write_header = not os.path.exists(log_file)
+
+def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
+    with open(log_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["height_mm", "tower", "axis", "error_mm",
+                             "det_x", "det_y", "det_z",
+                             "cmd_x", "cmd_y", "cmd_z", "timestamp"])
+        writer.writerow([height_mm, tower, axis, error_mm,
+                        detected_pos[0], detected_pos[1], detected_pos[2],
+                        commanded[0], commanded[1], commanded[2],
+                        time.strftime("%Y-%m-%d %H:%M:%S")])
+
+# ── Main experiment loop ───────────────────────────────────────
+print("Starting experiment — going to home position")
+go_home()
+
+for height in TEST_HEIGHTS:
+    test_z = TALLEST_TOP_Z + height
+
+    print(f"\n{'='*50}")
+    print(f"Height: {height}mm above tallest tower  (Z={test_z:.2f}mm)")
+    print(f"{'='*50}")
+
+    # Move to observation position
+    obs_pos = [OBS_X, OBS_Y, test_z, ORI[0], ORI[1], ORI[2]]
+    move_to(obs_pos, speed=SPEED_HOME)
+    time.sleep(1)
+
+    # Show live feed
+    if not show_live_feed(duration=15):
+        print(f"  Height {height}mm skipped")
+        go_home()
+        continue
+
+    # Get current TCP Z for depth calculation
+    tcp_z_mm = get_tcp_z()
+    print(f"  TCP Z: {tcp_z_mm:.2f}mm")
+
+    # Detect towers
+    print("  Detecting towers...")
+    tower_positions = detect_towers(n_frames=10)
+
+    if not tower_positions:
+        print(f"  No towers detected at {height}mm — skipping")
+        go_home()
+        continue
+
+    print(f"  Detected: {list(tower_positions.keys())}")
+
+    for tower_name, pt_cam in tower_positions.items():
+
+        # Convert to base frame
+        pt_base_mm = camera_to_base(pt_cam, tcp_z_mm)
+
+        if np.any(np.isnan(pt_base_mm)):
+            print(f"  WARNING: NaN for {tower_name} — skipping")
+            continue
+
+        # Deviation from known tower position
+        known_pos = TOWER_KNOWN_POS[tower_name]
+        dx = pt_base_mm[0] - known_pos[0]
+        dy = pt_base_mm[1] - known_pos[1]
+        dz = pt_base_mm[2] - known_pos[2]
+
+        # Commanded probe — only relevant axis shifts
+        cmd_x = np.array([
+            KNOWN_PROBE_X[0] + dx,
+            KNOWN_PROBE_X[1],
+            KNOWN_PROBE_X[2]
+        ])
+
+        cmd_y = np.array([
+            KNOWN_PROBE_Y[0],
+            KNOWN_PROBE_Y[1] + dy,
+            KNOWN_PROBE_Y[2]
+        ])
+
+        cmd_z = np.array([
+            KNOWN_PROBE_Z[0],
+            KNOWN_PROBE_Z[1],
+            KNOWN_PROBE_Z[2] + dz
+        ])
+
+        print(f"\n  Tower {tower_name}mm | detected: "
+              f"X={pt_base_mm[0]:.2f} Y={pt_base_mm[1]:.2f} "
+              f"Z={pt_base_mm[2]:.2f} mm")
+        print(f"    Known:     X={known_pos[0]:.2f} Y={known_pos[1]:.2f} "
+              f"Z={known_pos[2]:.2f} mm")
+        print(f"    Deviation: dX={dx:.2f} dY={dy:.2f} dZ={dz:.2f} mm")
+        print(f"    CMD_X: X={cmd_x[0]:.2f} Y={cmd_x[1]:.2f} Z={cmd_x[2]:.2f}")
+        print(f"    CMD_Y: X={cmd_y[0]:.2f} Y={cmd_y[1]:.2f} Z={cmd_y[2]:.2f}")
+        print(f"    CMD_Z: X={cmd_z[0]:.2f} Y={cmd_z[1]:.2f} Z={cmd_z[2]:.2f}")
+
+        # ── X axis ────────────────────────────────────────────
+        print("    → Approach XY")
+        move_to(APPROACH_XY, speed=SPEED)
+        print("    → Probe X zero position")
+        move_to(PROBE_X, speed=SPEED)
+        print("    → Offset X position")
+        move_to([cmd_x[0], cmd_x[1], cmd_x[2],
+                 ORI[0], ORI[1], ORI[2]], speed=SPEED)
+        time.sleep(2)
+        x_reading = float(input("    X dial gauge reading (mm): "))
+        log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x)
+        print("    → Back to approach XY")
+        move_to(APPROACH_XY, speed=SPEED)
+
+        # ── Y axis ────────────────────────────────────────────
+        print("    → Approach XY")
+        move_to(APPROACH_XY, speed=SPEED)
+        print("    → Probe Y zero position")
+        move_to(PROBE_Y, speed=SPEED)
+        print("    → Offset Y position")
+        move_to([cmd_y[0], cmd_y[1], cmd_y[2],
+                 ORI[0], ORI[1], ORI[2]], speed=SPEED)
+        time.sleep(2)
+        y_reading = float(input("    Y dial gauge reading (mm): "))
+        log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y)
+        print("    → Back to approach XY")
+        move_to(APPROACH_XY, speed=SPEED)
+
+        # ── Z axis ────────────────────────────────────────────
+        print("    → Safe Z intermediate")
+        move_to(SAFE_Z, speed=SPEED)
+        print("    → Approach Z")
+        move_to(APPROACH_Z, speed=SPEED)
+        print("    → Probe Z zero position")
+        move_to(PROBE_Z, speed=SPEED)
+        print("    → Offset Z position")
+        move_to([cmd_z[0], cmd_z[1], cmd_z[2],
+                 ORI[0], ORI[1], ORI[2]], speed=SPEED)
+        time.sleep(2)
+        z_reading = float(input("    Z dial gauge reading (mm): "))
+        log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z)
+        print("    → Back to approach Z")
+        move_to(APPROACH_Z, speed=SPEED)
+        print("    → Back to safe Z")
+        move_to(SAFE_Z, speed=SPEED)
+
+    print(f"\n  Height {height}mm complete — returning home")
+    go_home()
+
+# ── Cleanup ───────────────────────────────────────────────────
+rtde_c.disconnect()
+rtde_r.disconnect()
+pipeline.stop()
+print("\nExperiment complete. Results saved to results.csv")
