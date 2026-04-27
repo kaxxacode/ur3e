@@ -34,11 +34,20 @@
     ```BASH
     ros2 launch realsense2_camera rs_launch.py \
         camera_name:=camera \
+        enable_rgb:=true \
+        enable_depth:=true \
         align_depth.enable:=true \
         pointcloud.enable:=true \
-        rgb_camera.profile:=640x480x15 \
-        depth_module.profile:=640x480x15 \
+        depth_module.depth_profile:=1280x720x15 \
+        depth_module.color_profile:=1280x720x15 \
+        depth_module.infra_profile:=1280x720x15 \
         filters:=spatial,temporal
+    ```
+
+    Optionally test the frame rate:
+
+    ```BASH
+     ros2 topic hz /camera/camera/depth/color/points
     ```
 
 1. Launch VS Code, on the docker container. 
@@ -246,20 +255,39 @@ This is complicated by the fact that `ws_moveit` is already included within the 
     nc -l -p 30002
     ```
 
-1. Launching RVizz
+**PowerShell Admin — attach camera:**
+```powershell
+usbipd attach --wsl --busid 2-13
+```
 
-    **Terminal 1:**
-    ```bash
-    while true; do
-    ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur3e robot_ip:=192.168.1.102 headless_mode:=true reverse_ip:=192.168.1.10 launch_rviz:=false
-    echo "Driver dropped, restarting in 5 seconds..."
-    sleep 5
-    done
-    ```
+**Terminal 1 — recovery loop:**
+```bash
+source /opt/ros/jazzy/setup.bash
+source /root/ws_moveit/install/setup.bash
+cd /root/ws_moveit/my_scripts
+./ur_recovery.sh
+```
 
-    **Terminal 2:**
-    ```bash
-    ros2 launch ur_moveit_config ur_moveit.launch.py ur_type:=ur3e launch_rviz:=true
-    ```
+**Terminal 2 — MoveIt auto-restart loop:**
+```bash
+source /opt/ros/jazzy/setup.bash
+source /root/ws_moveit/install/setup.bash
+while true; do
+  ros2 launch ur_moveit_config ur_moveit.launch.py ur_type:=ur3e launch_rviz:=false
+  echo "MoveIt dropped, restarting in 5 seconds..."
+  sleep 5
+done
+```
 
-    Robot must be in **Remote Control** mode on the pendant. No program loaded or running.Memory updated. That's your confirmed working setup saved.
+**Terminal 3 — experiment:**
+```bash
+source /opt/ros/jazzy/setup.bash
+source /root/ws_moveit/install/setup.bash
+python3 /root/ws_moveit/my_scripts/experiment_moveit.py
+```
+
+**Order matters:**
+1. Start Terminal 1 — wait for `Robot ready to receive control commands`
+2. Start Terminal 2 — wait for `You can start planning now!`
+3. Start Terminal 3
+4. Robot pendant must be in **Remote Control**, nothing running
