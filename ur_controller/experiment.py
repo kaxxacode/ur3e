@@ -58,8 +58,11 @@ OBS_X = 81.0
 OBS_Y = -305.0
 
 # Camera offset from flange (mm)
-CAM_Z_OFFSET = 15.0  # camera is 15mm below flange
-EXT_LENGTH   = 35.0  # extrusion tip is 35mm below flange
+CAM_Z_OFFSET    = 15.0   # camera front glass is 15mm below flange
+EXT_LENGTH      = 35.0   # extrusion tip is 35mm below flange
+CAM_GLASS_OFFSET = 0.0037 # D405 optical centre is 3.7mm behind front glass (metres)
+                          # SDK reports Z from front glass; X/Y back-projection needs
+                          # Z from optical centre, so add this before back-projecting.
 
 # Speeds
 SPEED      = 0.05  # 50 mm/s probe moves
@@ -181,8 +184,12 @@ def detect_towers(n_frames=10):
             if z == 0:
                 print(f"    WARNING: zero depth for {cls_name} at ({cx},{cy})")
                 continue
-            x = (cx - intr.ppx) * z / intr.fx
-            y = (cy - intr.ppy) * z / intr.fy
+            # X, Y back-projection uses optical-centre Z (glass + 3.7mm).
+            # Z is kept as glass-referenced for the coordinate transform,
+            # where CAM_Z_OFFSET is also measured to the front glass.
+            z_optical = z + CAM_GLASS_OFFSET
+            x = (cx - intr.ppx) * z_optical / intr.fx
+            y = (cy - intr.ppy) * z_optical / intr.fy
             detections[cls_name].append([x, y, z])
     result = {}
     for cls_name, pts in detections.items():
