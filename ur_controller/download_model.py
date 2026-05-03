@@ -21,7 +21,7 @@ from roboflow import Roboflow
 API_KEY      = "jx94iZyNPmqHjKcKSCGW"   # Roboflow → Settings → Roboflow API
 WORKSPACE    = "towerdetection" # Roboflow → Settings → Workspace (slug)
 PROJECT_NAME = "testtower-4p8p8"
-VERSION      = 17
+VERSION      = 20
  
 # ---------------------------------------------------------------------------
  

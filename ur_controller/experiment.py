@@ -48,7 +48,7 @@ TOWER_KNOWN_POS = {
 TOWERS = list(TOWER_KNOWN_POS.keys())
 
 # Tallest tower top Z in base frame (mm)
-TALLEST_TOP_Z = 83.0
+LOWEST_TOP_Z = 68.0
 
 # Test heights above tallest tower (mm) — 10cm to 30cm
 TEST_HEIGHTS = [100, 150, 200, 250, 300]
@@ -229,10 +229,13 @@ print("Starting experiment — going to home position")
 go_home()
 
 for height in TEST_HEIGHTS:
-    test_z = TALLEST_TOP_Z + height
+    
+    # -20mm accounts for the offsets arising from
+    # the tool extrusion
+    test_z = LOWEST_TOP_Z + height - 20
 
     print(f"\n{'='*50}")
-    print(f"Height: {height}mm above tallest tower  (Z={test_z:.2f}mm)")
+    print(f"Height: {height}mm above lowest tower  (Z={test_z:.2f}mm)")
     print(f"{'='*50}")
 
     # Move to observation position
