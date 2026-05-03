@@ -19,39 +19,63 @@ from ultralytics import YOLO
 # ── Configuration ─────────────────────────────────────────────
 PLATFORM = "MoveIt2"
 WEIGHTS  = "/root/ws_moveit/best.pt"
-N_TRIALS = 20
 
 # Fixed orientation (quaternion x y z w)
 ORI_QUAT = [0.7126, -0.7017, 0.00574, 0.00898]  # x y z w
 
 # Positions in mm
 HOME_MM        = [81.0,    -305.0,  383.0]
+
+# Approach positions (mm) — BASE FRAME
 APPROACH_XY_MM = [114.31,  -261.46,  93.41]
 SAFE_Z_MM      = [109.43,  -255.09, 268.02]
 APPROACH_Z_MM  = [219.96,  -335.28, 239.23]
+
+# Known zero positions in base frame (mm)
 PROBE_X_MM     = [142.78,  -261.45,  93.42]
 PROBE_Y_MM     = [114.31,  -276.97,  93.40]
 PROBE_Z_MM     = [219.97,  -335.28, 216.91]
 
+# Known probe positions in base frame (mm)
 KNOWN_PROBE_X = np.array([142.78, -261.45,  93.42])
 KNOWN_PROBE_Y = np.array([114.31, -276.97,  93.40])
 KNOWN_PROBE_Z = np.array([219.97, -335.28, 216.91])
 
+# Part 0,0 in base frame (mm)
 PART_ORIGIN = np.array([9.0, -305.0, 88.9])
 
+# Known tower positions in base frame (mm)
 TOWER_KNOWN_POS = {
     "12": np.array([-16.0, -287.5, 68.0]),
     "17": np.array([ 26.5, -287.5, 73.0]),
     "22": np.array([ -1.0, -322.5, 78.0]),
     "27": np.array([ 26.5, -322.5, 83.0]),
 }
+
+# Tower class names for detection
 TOWERS = list(TOWER_KNOWN_POS.keys())
 
-OBS_X        = 81.0
-OBS_Y        = -305.0
-OBS_Z_MM     = 183.0
-CAM_Z_OFFSET = 15.0
-EXT_LENGTH   = 35.0
+# Lowest tower top Z in base frame (mm)
+LOWEST_TOP_Z = 68.0
+
+# Test heights above lowest tower (mm) — 10cm to 30cm
+TEST_HEIGHTS = [100, 150, 200, 250, 300]
+
+# Observation X, Y (mm) — camera 0,0 above part 0,0
+OBS_X = 81.0
+OBS_Y = -305.0
+
+# Camera offset from flange (mm)
+CAM_Z_OFFSET    = 15.0    # camera front glass is 15mm below flange
+EXT_LENGTH      = 35.0    # extrusion tip is 35mm below flange
+CAM_GLASS_OFFSET = 0.0037 # D405 optical centre is 3.7mm behind front glass (metres)
+                           # SDK reports Z from front glass; X/Y back-projection needs
+                           # Z from optical centre, so add this before back-projecting.
+
+# Speeds
+SPEED_SCALE_PROBE   = 0.05   # 50 mm/s   -> 50/1000
+SPEED_SCALE_TRANSIT = 0.20   # 200 mm/s  -> 200/1000
+ACCEL_SCALE         = 0.08   # 1.2 m/s^2 -> 1200/15000 (MoveIt uses mm/s^2)
 
 # Retry settings
 MAX_RETRIES  = 10
@@ -72,24 +96,24 @@ DEFAULT_COLOUR = (255, 255, 255)
 LOG_FILE     = "/root/ws_moveit/my_scripts/results_moveit.csv"
 write_header = not os.path.exists(LOG_FILE)
 
-def log_result(trial, tower, axis, error_mm, detected_pos, commanded):
+def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
     global write_header
     with open(LOG_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
             writer.writerow([
-                "platform", "trial", "tower", "axis", "error_mm",
+                "platform", "height_mm", "tower", "axis", "error_mm",
                 "det_x", "det_y", "det_z",
                 "cmd_x", "cmd_y", "cmd_z", "timestamp"
             ])
             write_header = False
+
         writer.writerow([
-            PLATFORM, trial, tower, axis, error_mm,
+            PLATFORM, height_mm, tower, axis, error_mm,
             detected_pos[0], detected_pos[1], detected_pos[2],
             commanded[0], commanded[1], commanded[2],
             time.strftime("%Y-%m-%d %H:%M:%S")
         ])
-
 
 # ── MoveIt 2 Node ─────────────────────────────────────────────
 class MoveItController(Node):
@@ -118,16 +142,15 @@ class MoveItController(Node):
             z_mm = self._tcp_pose.pose.position.z * 1000.0
             self.get_logger().info(f"  TCP Z: {z_mm:.2f} mm")
             return z_mm
-        self.get_logger().warn("  TCP pose not available — using fallback OBS_Z_MM")
-        return OBS_Z_MM
+        return None
 
-    def _build_request(self, x_m, y_m, z_m, max_velocity_scaling=0.1):
+    def _build_request(self, x_m, y_m, z_m, max_velocity_scaling=SPEED_SCALE_PROBE):
         req = MotionPlanRequest()
         req.group_name = "ur_manipulator"
         req.num_planning_attempts = 5
         req.allowed_planning_time = 10.0
         req.max_velocity_scaling_factor = max_velocity_scaling
-        req.max_acceleration_scaling_factor = 0.1
+        req.max_acceleration_scaling_factor = ACCEL_SCALE
 
         target = PoseStamped()
         target.header.frame_id = "base"
@@ -168,7 +191,7 @@ class MoveItController(Node):
 
         return req
 
-    def move_to_mm(self, pos_mm, speed_scale=0.1):
+    def move_to_mm(self, pos_mm, speed_scale=SPEED_SCALE_PROBE):
         """Move to position in mm with automatic retry on driver drop."""
         x_m, y_m, z_m = [p / 1000.0 for p in pos_mm]
 
@@ -228,15 +251,15 @@ class MoveItController(Node):
 
     def go_home(self):
         self.get_logger().info("Moving to home...")
-        return self.move_to_mm(HOME_MM, speed_scale=0.3)
+        return self.move_to_mm(HOME_MM, speed_scale=SPEED_SCALE_TRANSIT)
 
 
 # ── Camera setup (matching detect_towers.py) ──────────────────
 pipeline = rs.pipeline()
-cfg = rs.config()
-cfg.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-cfg.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16,  30)
-profile = pipeline.start(cfg)
+config = rs.config()
+config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
+config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16,  30)
+profile = pipeline.start(config)
 
 intr  = (profile.get_stream(rs.stream.color)
          .as_video_stream_profile().get_intrinsics())
@@ -253,8 +276,43 @@ print(f"[INFO] Loading model: {WEIGHTS}")
 model = YOLO(WEIGHTS)
 print(f"[OK]  Model loaded. Classes: {list(model.names.values())}")
 
+# ── Live feed ─────────────────────────────────────────────────
+def show_live_feed(duration=15):
+    print("  Live feed — SPACE to continue, Q to skip height")
+    start = time.time()
+    while True:
+        frames      = pipeline.wait_for_frames()
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            continue
+        img       = np.asanyarray(color_frame.get_data())
+        results   = model(img, verbose=False)
+        annotated, detections = draw_detections(img.copy(), results)
+        n_det     = len(detections)
+        elapsed   = time.time() - start
+        cv2.putText(annotated,
+                    f"Detections: {n_det}  |  {elapsed:.1f}s / {duration}s",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(annotated,
+                    "SPACE = continue  |  Q = skip height",
+                    (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+        cv2.imshow("Live Detection", annotated)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord(' '):
+            cv2.destroyAllWindows()
+            return True
+        elif key == ord('q'):
+            cv2.destroyAllWindows()
+            return False
+        if elapsed > duration:
+            cv2.destroyAllWindows()
+            return True
 
-# ── Vision helpers ────────────────────────────────────────────
+# ── Tower detection ───────────────────────────────────────────
+def flush_pipeline(n=10):
+    for _ in range(n):
+        pipeline.wait_for_frames()
+
 def get_depth_at_pixel(depth_frame, cx, cy, window=5):
     depths = []
     for dx in range(-window, window + 1):
@@ -264,7 +322,9 @@ def get_depth_at_pixel(depth_frame, cx, cy, window=5):
                 d = depth_frame.get_distance(px, py)
                 if d > 0:
                     depths.append(d)
-    return float(np.median(depths)) if depths else 0
+    if len(depths) == 0:
+        return 0
+    return float(np.median(depths))
 
 
 def draw_detections(frame, results):
@@ -305,36 +365,9 @@ def draw_detections(frame, results):
     return frame, detections
 
 
-def show_live_feed():
-    """Live feed with same drawing style as detect_towers.py. SPACE to continue."""
-    print("  Live feed — press SPACE when ready to detect")
-    while True:
-        frames      = pipeline.wait_for_frames()
-        color_frame = frames.get_color_frame()
-        if not color_frame:
-            continue
-        img     = np.asanyarray(color_frame.get_data())
-        results = model(img, verbose=False)
-        annotated, _ = draw_detections(img.copy(), results)
-        cv2.putText(annotated, "SPACE = detect and continue",
-                    (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.imshow("YOLOv11 Tower Detection", annotated)
-        if cv2.waitKey(1) & 0xFF == ord(' '):
-            cv2.destroyAllWindows()
-            return
-
-
 def detect_towers(n_frames=10):
-    """
-    Collect n_frames of detections and return median pose per tower.
-    Uses same confidence threshold and class filtering as detect_towers.py.
-    """
-    for _ in range(5):
-        pipeline.wait_for_frames()
-
+    flush_pipeline()
     detections = {k: [] for k in TOWERS}
-    valid = 0
-
     for _ in range(n_frames):
         frames      = pipeline.wait_for_frames()
         frames      = align.process(frames)
@@ -342,48 +375,45 @@ def detect_towers(n_frames=10):
         depth_frame = frames.get_depth_frame()
         if not color_frame or not depth_frame:
             continue
-
         img     = np.asanyarray(color_frame.get_data())
-        results = model(img, verbose=False)
-        frame_valid = False
-
-        for result in results:
-            for box in result.boxes:
-                conf = float(box.conf[0])
-                if conf < CONFIDENCE_THRESHOLD:
-                    continue
-                cls_name = result.names[int(box.cls[0])]
-                if cls_name not in TOWERS:
-                    continue
-                cx = int((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
-                cy = int((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
-                z  = get_depth_at_pixel(depth_frame, cx, cy)
-                if z == 0:
-                    continue
-                x = (cx - intr.ppx) * z / intr.fx
-                y = (cy - intr.ppy) * z / intr.fy
-                detections[cls_name].append([x, y, z])
-                frame_valid = True
-
-        if frame_valid:
-            valid += 1
-
-    if valid < 7:
-        print(f"  WARNING: only {valid}/10 valid frames — trial will be flagged")
+        results = model(img, verbose=False)[0]
+        for box in results.boxes:
+            cls_name = model.names[int(box.cls)]
+            if cls_name not in TOWERS:
+                continue
+            cx = int((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
+            cy = int((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
+            z  = get_depth_at_pixel(depth_frame, cx, cy, window=5)
+            if z == 0:
+                print(f"    WARNING: zero depth for {cls_name} at ({cx},{cy})")
+                continue
+            # X, Y back-projection uses optical-centre Z (glass + 3.7mm).
+            # Z is kept as glass-referenced for the coordinate transform,
+            # where CAM_Z_OFFSET is also measured to the front glass.
+            z_optical = z + CAM_GLASS_OFFSET
+            x = (cx - intr.ppx) * z_optical / intr.fx
+            y = (cy - intr.ppy) * z_optical / intr.fy
+            detections[cls_name].append([x, y, z])
 
     result = {}
     for cls_name, pts in detections.items():
         if len(pts) >= 7:
             result[cls_name] = np.median(pts, axis=0)
-            print(f"    {cls_name}: x={result[cls_name][0]:.4f} "
-                  f"y={result[cls_name][1]:.4f} z={result[cls_name][2]:.4f} m")
+            print(f"    {cls_name} camera frame: "
+                  f"x={result[cls_name][0]:.4f} "
+                  f"y={result[cls_name][1]:.4f} "
+                  f"z={result[cls_name][2]:.4f} metres")
         else:
-            if pts:
-                print(f"    WARNING: {cls_name} only {len(pts)} valid detections — skipped")
-    return result, valid
+            print(f"    WARNING: only {len(pts)} valid frames for {cls_name}")
+    return result
 
 
 def camera_to_base(pt_cam, tcp_z_mm):
+    """
+    Camera 0,0 is directly above part 0,0.
+    X, Y from camera frame with Y flipped.
+    Z from depth reading corrected for camera height and extrusion offset.
+    """
     base_x = PART_ORIGIN[0] + pt_cam[0] * 1000
     base_y = PART_ORIGIN[1] + (-pt_cam[1]) * 1000
     camera_z_mm = tcp_z_mm - CAM_Z_OFFSET
@@ -398,100 +428,125 @@ def main():
 
     print("\n" + "="*50)
     print(f"  EXPERIMENT — Platform: {PLATFORM}")
-    print(f"  Trials: {N_TRIALS}")
     print(f"  Log: {LOG_FILE}")
     print("="*50)
 
     print("\nMoving to home position...")
     robot.go_home()
 
-    for trial in range(1, N_TRIALS + 1):
+    for height in TEST_HEIGHTS:
+
+        # -20mm accounts for the offsets arising from
+        # the tool extrusion
+        test_z = LOWEST_TOP_Z + height - 20
+
         print(f"\n{'='*50}")
-        print(f"  TRIAL {trial}/{N_TRIALS}")
+        print(f"Height: {height}mm above lowest tower  (Z={test_z:.2f}mm)")
         print(f"{'='*50}")
 
-        print("  Moving to observation position...")
-        robot.move_to_mm([OBS_X, OBS_Y, OBS_Z_MM], speed_scale=0.3)
+        # Move to observation position
+        robot.move_to_mm([OBS_X, OBS_Y, test_z], speed_scale=SPEED_SCALE_TRANSIT)
         time.sleep(1.0)
 
+        # Show live feed
+        if not show_live_feed(duration=15):
+            print(f"  Height {height}mm skipped")
+            robot.go_home()
+            continue
+
+        # Get current TCP Z for depth calculation
         tcp_z_mm = robot.get_tcp_z()
+        if tcp_z_mm is None:
+            tcp_z_mm = test_z
+            print(f"  TCP Z fallback: {tcp_z_mm:.2f}mm")
+        else:
+            print(f"  TCP Z: {tcp_z_mm:.2f}mm")
 
-        show_live_feed()
-
+        # Detect towers
         print("  Detecting towers...")
-        tower_positions, valid_frames = detect_towers(n_frames=10)
+        tower_positions = detect_towers(n_frames=10)
 
         if not tower_positions:
-            print("  No towers detected — flagging trial and continuing")
+            print(f"  No towers detected at {height}mm — skipping")
             robot.go_home()
             continue
 
-        tower_name = list(tower_positions.keys())[0]
-        pt_cam     = tower_positions[tower_name]
-        pt_base_mm = camera_to_base(pt_cam, tcp_z_mm)
+        print(f"  Detected: {list(tower_positions.keys())}")
 
-        if np.any(np.isnan(pt_base_mm)):
-            print("  WARNING: NaN in detected position — skipping trial")
-            robot.go_home()
-            continue
+        for tower_name, pt_cam in tower_positions.items():
 
-        known_pos = TOWER_KNOWN_POS[tower_name]
-        dx = pt_base_mm[0] - known_pos[0]
-        dy = pt_base_mm[1] - known_pos[1]
-        dz = pt_base_mm[2] - known_pos[2]
+            # Convert to base frame
+            pt_base_mm = camera_to_base(pt_cam, tcp_z_mm)
 
-        cmd_x = np.array([KNOWN_PROBE_X[0] + dx, KNOWN_PROBE_X[1], KNOWN_PROBE_X[2]])
-        cmd_y = np.array([KNOWN_PROBE_Y[0], KNOWN_PROBE_Y[1] + dy, KNOWN_PROBE_Y[2]])
-        cmd_z = np.array([KNOWN_PROBE_Z[0], KNOWN_PROBE_Z[1], KNOWN_PROBE_Z[2] + dz])
+            if np.any(np.isnan(pt_base_mm)):
+                print(f"  WARNING: NaN for {tower_name} — skipping")
+                continue
 
-        print(f"\n  Tower {tower_name} | det: "
-              f"X={pt_base_mm[0]:.2f} Y={pt_base_mm[1]:.2f} Z={pt_base_mm[2]:.2f} mm")
-        print(f"  Deviation: dX={dx:.2f} dY={dy:.2f} dZ={dz:.2f} mm")
+            # Deviation from known tower position
+            known_pos = TOWER_KNOWN_POS[tower_name]
+            dx = pt_base_mm[0] - known_pos[0]
+            dy = pt_base_mm[1] - known_pos[1]
+            dz = pt_base_mm[2] - known_pos[2]
 
-        # ── X axis ────────────────────────────────────────────
-        print("\n  → Approach XY")
-        robot.move_to_mm(APPROACH_XY_MM, speed_scale=0.1)
-        print("  → Probe X zero")
-        robot.move_to_mm(PROBE_X_MM, speed_scale=0.1)
-        print("  → Offset X")
-        robot.move_to_mm([cmd_x[0], cmd_x[1], cmd_x[2]], speed_scale=0.1)
-        time.sleep(2.0)
-        x_reading = float(input("  X dial gauge reading (mm): "))
-        log_result(trial, tower_name, "X", x_reading, pt_base_mm, cmd_x)
-        print("  → Back to approach XY")
-        robot.move_to_mm(APPROACH_XY_MM, speed_scale=0.1)
+            # Commanded probe — only relevant axis shifts
+            cmd_x = np.array([KNOWN_PROBE_X[0] + dx, KNOWN_PROBE_X[1], KNOWN_PROBE_X[2]])
+            cmd_y = np.array([KNOWN_PROBE_Y[0], KNOWN_PROBE_Y[1] + dy, KNOWN_PROBE_Y[2]])
+            cmd_z = np.array([KNOWN_PROBE_Z[0], KNOWN_PROBE_Z[1], KNOWN_PROBE_Z[2] + dz])
 
-        # ── Y axis ────────────────────────────────────────────
-        print("\n  → Approach XY")
-        robot.move_to_mm(APPROACH_XY_MM, speed_scale=0.1)
-        print("  → Probe Y zero")
-        robot.move_to_mm(PROBE_Y_MM, speed_scale=0.1)
-        print("  → Offset Y")
-        robot.move_to_mm([cmd_y[0], cmd_y[1], cmd_y[2]], speed_scale=0.1)
-        time.sleep(2.0)
-        y_reading = float(input("  Y dial gauge reading (mm): "))
-        log_result(trial, tower_name, "Y", y_reading, pt_base_mm, cmd_y)
-        print("  → Back to approach XY")
-        robot.move_to_mm(APPROACH_XY_MM, speed_scale=0.1)
+            print(f"\n  Tower {tower_name}mm | detected: "
+                  f"X={pt_base_mm[0]:.2f} Y={pt_base_mm[1]:.2f} "
+                  f"Z={pt_base_mm[2]:.2f} mm")
+            print(f"    Known:     X={known_pos[0]:.2f} Y={known_pos[1]:.2f} "
+                  f"Z={known_pos[2]:.2f} mm")
+            print(f"    Deviation: dX={dx:.2f} dY={dy:.2f} dZ={dz:.2f} mm")
+            print(f"    CMD_X: X={cmd_x[0]:.2f} Y={cmd_x[1]:.2f} Z={cmd_x[2]:.2f}")
+            print(f"    CMD_Y: X={cmd_y[0]:.2f} Y={cmd_y[1]:.2f} Z={cmd_y[2]:.2f}")
+            print(f"    CMD_Z: X={cmd_z[0]:.2f} Y={cmd_z[1]:.2f} Z={cmd_z[2]:.2f}")
 
-        # ── Z axis ────────────────────────────────────────────
-        print("\n  → Safe Z")
-        robot.move_to_mm(SAFE_Z_MM, speed_scale=0.1)
-        print("  → Approach Z")
-        robot.move_to_mm(APPROACH_Z_MM, speed_scale=0.1)
-        print("  → Probe Z zero")
-        robot.move_to_mm(PROBE_Z_MM, speed_scale=0.1)
-        print("  → Offset Z")
-        robot.move_to_mm([cmd_z[0], cmd_z[1], cmd_z[2]], speed_scale=0.1)
-        time.sleep(2.0)
-        z_reading = float(input("  Z dial gauge reading (mm): "))
-        log_result(trial, tower_name, "Z", z_reading, pt_base_mm, cmd_z)
-        print("  → Back to approach Z")
-        robot.move_to_mm(APPROACH_Z_MM, speed_scale=0.1)
-        print("  → Back to safe Z")
-        robot.move_to_mm(SAFE_Z_MM, speed_scale=0.1)
+            # ── X axis ────────────────────────────────────────
+            print("    → Approach XY")
+            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Probe X zero position")
+            robot.move_to_mm(PROBE_X_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Offset X position")
+            robot.move_to_mm([cmd_x[0], cmd_x[1], cmd_x[2]], speed_scale=SPEED_SCALE_PROBE)
+            time.sleep(2.0)
+            x_reading = float(input("    X dial gauge reading (mm): "))
+            log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x)
+            print("    → Back to approach XY")
+            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
 
-        print(f"\n  Trial {trial} complete — returning home")
+            # ── Y axis ────────────────────────────────────────
+            print("    → Approach XY")
+            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Probe Y zero position")
+            robot.move_to_mm(PROBE_Y_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Offset Y position")
+            robot.move_to_mm([cmd_y[0], cmd_y[1], cmd_y[2]], speed_scale=SPEED_SCALE_PROBE)
+            time.sleep(2.0)
+            y_reading = float(input("    Y dial gauge reading (mm): "))
+            log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y)
+            print("    → Back to approach XY")
+            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
+
+            # ── Z axis ────────────────────────────────────────
+            print("    → Safe Z intermediate")
+            robot.move_to_mm(SAFE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Approach Z")
+            robot.move_to_mm(APPROACH_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Probe Z zero position")
+            robot.move_to_mm(PROBE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Offset Z position")
+            robot.move_to_mm([cmd_z[0], cmd_z[1], cmd_z[2]], speed_scale=SPEED_SCALE_PROBE)
+            time.sleep(2.0)
+            z_reading = float(input("    Z dial gauge reading (mm): "))
+            log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z)
+            print("    → Back to approach Z")
+            robot.move_to_mm(APPROACH_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            print("    → Back to safe Z")
+            robot.move_to_mm(SAFE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+
+        print(f"\n  Height {height}mm complete — returning home")
         robot.go_home()
 
     pipeline.stop()

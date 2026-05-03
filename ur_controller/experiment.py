@@ -10,6 +10,7 @@ import os
 
 # ── Configuration ─────────────────────────────────────────────
 ROBOT_IP = "192.168.1.102"
+PLATFORM = "UR Polyscope"
 WEIGHTS  = "/home/nathan/code/ur3e/ur_controller/best.pt"
 
 # Fixed orientation for all moves
@@ -69,6 +70,29 @@ SPEED      = 0.05  # 50 mm/s probe moves
 SPEED_HOME = 0.2   # 200 mm/s home/transit moves
 ACCEL      = 1.2   # m/s^2
 
+# ── Log file ──────────────────────────────────────────────────
+LOG_FILE     = "/home/nathan/code/ur3e/ur_controller/results.csv"
+write_header = not os.path.exists(LOG_FILE)
+
+def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
+    global write_header
+    with open(LOG_FILE, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow([
+                "platform", "height_mm", "tower", "axis", "error_mm",
+                "det_x", "det_y", "det_z",
+                "cmd_x", "cmd_y", "cmd_z", "timestamp"
+            ])
+            write_header = False
+
+        writer.writerow([
+            PLATFORM, height_mm, tower, axis, error_mm,
+            detected_pos[0], detected_pos[1], detected_pos[2],
+            commanded[0], commanded[1], commanded[2],
+            time.strftime("%Y-%m-%d %H:%M:%S")
+        ])
+
 # ── Helper ────────────────────────────────────────────────────
 def to_rtde_pose(pos_mm_rad):
     return [
@@ -109,8 +133,16 @@ intr  = (profile.get_stream(rs.stream.color)
          .as_video_stream_profile().get_intrinsics())
 align = rs.align(rs.stream.color)
 
-# ── YOLOv11 ───────────────────────────────────────────────────
+# Flush 30 frames on startup — same as detect_towers.py
+print("[INFO] Flushing camera pipeline...")
+for _ in range(30):
+    pipeline.wait_for_frames()
+print("[OK]  D405 streaming at 1280x720")
+
+# ── YOLO ──────────────────────────────────────────────────────
+print(f"[INFO] Loading model: {WEIGHTS}")
 model = YOLO(WEIGHTS)
+print(f"[OK]  Model loaded. Classes: {list(model.names.values())}")
 
 # ── Live feed ─────────────────────────────────────────────────
 def show_live_feed(duration=15):
@@ -151,8 +183,8 @@ def flush_pipeline(n=10):
 
 def get_depth_at_pixel(depth_frame, cx, cy, window=5):
     depths = []
-    for dx in range(-window, window+1):
-        for dy in range(-window, window+1):
+    for dx in range(-window, window + 1):
+        for dy in range(-window, window + 1):
             px, py = cx + dx, cy + dy
             if 0 <= px < 1280 and 0 <= py < 720:
                 d = depth_frame.get_distance(px, py)
@@ -161,6 +193,7 @@ def get_depth_at_pixel(depth_frame, cx, cy, window=5):
     if len(depths) == 0:
         return 0
     return float(np.median(depths))
+
 
 def detect_towers(n_frames=10):
     flush_pipeline()
@@ -191,6 +224,7 @@ def detect_towers(n_frames=10):
             x = (cx - intr.ppx) * z_optical / intr.fx
             y = (cy - intr.ppy) * z_optical / intr.fy
             detections[cls_name].append([x, y, z])
+
     result = {}
     for cls_name, pts in detections.items():
         if len(pts) >= 7:
@@ -202,6 +236,7 @@ def detect_towers(n_frames=10):
         else:
             print(f"    WARNING: only {len(pts)} valid frames for {cls_name}")
     return result
+
 
 def camera_to_base(pt_cam, tcp_z_mm):
     """
@@ -215,24 +250,14 @@ def camera_to_base(pt_cam, tcp_z_mm):
     base_z = camera_z_mm - pt_cam[2] * 1000 + EXT_LENGTH
     return np.array([base_x, base_y, base_z])
 
-# ── Data log ──────────────────────────────────────────────────
-log_file     = "/home/nathan/code/ur3e/ur_controller/results.csv"
-write_header = not os.path.exists(log_file)
-
-def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
-    with open(log_file, "a", newline="") as f:
-        writer = csv.writer(f)
-        if write_header:
-            writer.writerow(["height_mm", "tower", "axis", "error_mm",
-                             "det_x", "det_y", "det_z",
-                             "cmd_x", "cmd_y", "cmd_z", "timestamp"])
-        writer.writerow([height_mm, tower, axis, error_mm,
-                        detected_pos[0], detected_pos[1], detected_pos[2],
-                        commanded[0], commanded[1], commanded[2],
-                        time.strftime("%Y-%m-%d %H:%M:%S")])
 
 # ── Main experiment loop ───────────────────────────────────────
-print("Starting experiment — going to home position")
+print("\n" + "="*50)
+print(f"  EXPERIMENT — Platform: {PLATFORM}")
+print(f"  Log: {LOG_FILE}")
+print("="*50)
+
+print("\nMoving to home position...")
 go_home()
 
 for height in TEST_HEIGHTS:
@@ -287,23 +312,9 @@ for height in TEST_HEIGHTS:
         dz = pt_base_mm[2] - known_pos[2]
 
         # Commanded probe — only relevant axis shifts
-        cmd_x = np.array([
-            KNOWN_PROBE_X[0] + dx,
-            KNOWN_PROBE_X[1],
-            KNOWN_PROBE_X[2]
-        ])
-
-        cmd_y = np.array([
-            KNOWN_PROBE_Y[0],
-            KNOWN_PROBE_Y[1] + dy,
-            KNOWN_PROBE_Y[2]
-        ])
-
-        cmd_z = np.array([
-            KNOWN_PROBE_Z[0],
-            KNOWN_PROBE_Z[1],
-            KNOWN_PROBE_Z[2] + dz
-        ])
+        cmd_x = np.array([KNOWN_PROBE_X[0] + dx, KNOWN_PROBE_X[1], KNOWN_PROBE_X[2]])
+        cmd_y = np.array([KNOWN_PROBE_Y[0], KNOWN_PROBE_Y[1] + dy, KNOWN_PROBE_Y[2]])
+        cmd_z = np.array([KNOWN_PROBE_Z[0], KNOWN_PROBE_Z[1], KNOWN_PROBE_Z[2] + dz])
 
         print(f"\n  Tower {tower_name}mm | detected: "
               f"X={pt_base_mm[0]:.2f} Y={pt_base_mm[1]:.2f} "
