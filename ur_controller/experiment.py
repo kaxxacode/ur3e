@@ -198,7 +198,13 @@ def get_depth_at_pixel(depth_frame, cx, cy, window=5):
 def detect_towers(n_frames=10):
     flush_pipeline()
     detections = {k: [] for k in TOWERS}
-    for _ in range(n_frames):
+
+    valid_frames = 0
+    attempts     = 0
+    MAX_ATTEMPTS = 50
+    while valid_frames < n_frames and attempts < MAX_ATTEMPTS:
+        attempts += 1
+
         frames      = pipeline.wait_for_frames()
         frames      = align.process(frames)
         color_frame = frames.get_color_frame()
@@ -207,6 +213,8 @@ def detect_towers(n_frames=10):
             continue
         img     = np.asanyarray(color_frame.get_data())
         results = model(img, verbose=False)[0]
+
+        frame_data = {}
         for box in results.boxes:
             cls_name = model.names[int(box.cls)]
             if cls_name not in TOWERS:
@@ -215,28 +223,37 @@ def detect_towers(n_frames=10):
             cy = int((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
             z  = get_depth_at_pixel(depth_frame, cx, cy, window=5)
             if z == 0:
-                print(f"    WARNING: zero depth for {cls_name} at ({cx},{cy})")
                 continue
+
             # X, Y back-projection uses optical-centre Z (glass + 3.7mm).
             # Z is kept as glass-referenced for the coordinate transform,
             # where CAM_Z_OFFSET is also measured to the front glass.
             z_optical = z + CAM_GLASS_OFFSET
             x = (cx - intr.ppx) * z_optical / intr.fx
             y = (cy - intr.ppy) * z_optical / intr.fy
-            detections[cls_name].append([x, y, z])
+            frame_data[cls_name] = [x, y, z]
+
+        if set(frame_data.keys()) == set(TOWERS):
+            for cls_name, pt in frame_data.items():
+                detections[cls_name].append(pt)
+            valid_frames += 1
+        else:
+            missing = set(TOWERS) - set(frame_data.keys())
+            print(f"    Frame {attempts} rejected — missing: {missing}")
+
+    if valid_frames < n_frames:
+        print(f"    ERROR: only {valid_frames} complete frames after {MAX_ATTEMPTS} attempts — skipping height")
+        return {}
 
     result = {}
     for cls_name, pts in detections.items():
-        if len(pts) >= 7:
-            result[cls_name] = np.median(pts, axis=0)
-            print(f"    {cls_name} camera frame: "
-                  f"x={result[cls_name][0]:.4f} "
-                  f"y={result[cls_name][1]:.4f} "
-                  f"z={result[cls_name][2]:.4f} metres")
-        else:
-            print(f"    WARNING: only {len(pts)} valid frames for {cls_name}")
-    return result
+        result[cls_name] = np.median(pts, axis=0)
+        print(f"    {cls_name} camera frame: "
+            f"x={result[cls_name][0]:.4f} "
+            f"y={result[cls_name][1]:.4f} "
+            f"z={result[cls_name][2]:.4f} metres")
 
+    return result
 
 def camera_to_base(pt_cam, tcp_z_mm):
     """
