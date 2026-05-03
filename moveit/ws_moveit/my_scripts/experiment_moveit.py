@@ -137,6 +137,22 @@ class MoveItController(Node):
         self._tcp_pose = msg
 
     def get_tcp_z(self):
+        self._tcp_pose = None
+
+        # 5 second total wait
+        deadline = time.time() + 5.0
+        while self._tcp_pose is None and time.time() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.5)
+
+        if self._tcp_pose is not None:
+            z_mm = self._tcp_pose.pose.position.z * 1000.0
+            self.get_logger().info(f"  TCP Z: {z_mm:.2f} mm")
+            return z_mm
+            
+        self.get_logger().error("  TCP Z not available after 5s timeout")
+        return None
+
+    def get_tcp_z(self):
         rclpy.spin_once(self, timeout_sec=1.0)
         if self._tcp_pose is not None:
             z_mm = self._tcp_pose.pose.position.z * 1000.0
@@ -474,10 +490,11 @@ def main():
         # Get current TCP Z for depth calculation
         tcp_z_mm = robot.get_tcp_z()
         if tcp_z_mm is None:
-            tcp_z_mm = test_z
-            print(f"  TCP Z fallback: {tcp_z_mm:.2f}mm")
-        else:
-            print(f"  TCP Z: {tcp_z_mm:.2f}mm")
+            print(f"  ERROR: TCP Z not available — skipping height {height}mm")
+            robot.go_home()
+            continue
+
+        print(f"  TCP Z: {tcp_z_mm:.2f}mm")
 
         # Detect towers
         print("  Detecting towers...")
