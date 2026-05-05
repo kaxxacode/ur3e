@@ -41,7 +41,7 @@ CLASS_COLOURS = {
 }
 DEFAULT_COLOUR = (255, 255, 255)
 
-CONFIDENCE_THRESHOLD = 0.5   # detections below this are ignored
+CONFIDENCE_THRESHOLD = 0.7   # detections below this are ignored
 
 # ---------------------------------------------------------------------------
 

@@ -14,24 +14,24 @@ PLATFORM = "UR Polyscope"
 WEIGHTS  = "/home/nathan/code/ur3e/ur_controller/best.pt"
 
 # Fixed orientation for all moves
-ORI = [2.235, -2.201, 0.018]
+ORI = [2.235, -2.201, 0.0]
 
 # Home position — camera 0,0 above part 0,0 at 30cm height
-HOME = [81.0, -305.0, 383.0, 2.235, -2.201, 0.018]
+HOME = [81.0, -305.0, 383.0, 2.235, -2.201, 0.0]
 
 # Observation X, Y (mm) — camera 0,0 above part 0,0
 OBS_X = HOME[0]
 OBS_Y = HOME[1]
 
 # Approach positions (mm, radians) — BASE FRAME
-APPROACH_XY = [114.31, -261.46, 93.41,  2.235, -2.201, 0.018]
-SAFE_Z      = [109.43, -255.09, 268.02, 2.235, -2.201, 0.018]
-APPROACH_Z  = [219.96, -335.28, 239.23, 2.235, -2.201, 0.018]
+APPROACH_XY = [114.31, -261.46,  93.41, 2.235, -2.201, 0.0]
+SAFE_Z      = [109.43, -255.09, 268.02, 2.235, -2.201, 0.0]
+APPROACH_Z  = [219.96, -335.28, 239.23, 2.235, -2.201, 0.0]
 
 # Known zero positions in base frame (mm, radians)
-PROBE_X = [142.78, -261.45, 93.42,  2.235, -2.201, 0.018]
-PROBE_Y = [114.31, -276.97, 93.40,  2.235, -2.201, 0.018]
-PROBE_Z = [219.97, -335.28, 216.91, 2.235, -2.201, 0.018]
+PROBE_X = [142.78, -261.45,  93.42, 2.235, -2.201, 0.0]
+PROBE_Y = [114.31, -276.97,  93.40, 2.235, -2.201, 0.0]
+PROBE_Z = [219.97, -335.28, 216.91, 2.235, -2.201, 0.0]
 
 # Known probe positions in base frame (mm)
 KNOWN_PROBE_X = np.array([142.78, -261.45,  93.42])
@@ -46,24 +46,24 @@ PART_ORIGIN = np.array([9.0, -305.0, 88.9])
 # The extrusion is 20 mm in length, thus each z includes
 # an additional 20 mm offset from the TCP origin.
 TOWER_KNOWN_POS = {
-    "12": np.array([ -16.0, -287.5,  68.0]),
-    "17": np.array([  26.5, -287.5,  73.0]),
-    "22": np.array([  -1.0, -322.5,  78.0]),
-    "27": np.array([  26.5, -322.5,  83.0]),
+    "12": np.array([-16.0, -287.5,  68.0]),
+    "17": np.array([ 26.5, -287.5,  73.0]),
+    "22": np.array([ -1.0, -322.5,  78.0]),
+    "27": np.array([ 26.5, -322.5,  83.0]),
 }
 
 # Tower class names for detection
 TOWERS = list(TOWER_KNOWN_POS.keys())
 
-# Lowest tower top Z in base frame (mm)
-LOWEST_TOP_Z = 68.0
+# Highest tower top Z in base frame (mm)
+HIGHEST_TOP_Z = 83.0
 
 # Test heights above tallest tower (mm) — 10cm to 30cm
 TEST_HEIGHTS = [100, 150, 200, 250, 300]
 
 # Camera offset from flange (mm)
-CAM_Z_OFFSET    = 15.0   # camera front glass is 15mm below flange
-EXT_LENGTH      = 35.0   # extrusion tip is 35mm below flange
+CAM_Z_OFFSET     = 15.0   # camera front glass is 15mm below flange
+EXT_LENGTH       = 35.0   # extrusion tip is 35mm below flange
 CAM_GLASS_OFFSET = 0.0037 # D405 optical centre is 3.7mm behind front glass (metres)
                           # SDK reports Z from front glass; X/Y back-projection needs
                           # Z from optical centre, so add this before back-projecting.
@@ -73,11 +73,22 @@ SPEED      = 0.05  # 50 mm/s probe moves
 SPEED_HOME = 0.2   # 200 mm/s home/transit moves
 ACCEL      = 1.2   # m/s^2
 
+# ── Detection settings (matching detect_towers.py) ────────────
+CONFIDENCE_THRESHOLD = 0.7
+CLASS_COLOURS = {
+    "12":     (0,   255, 0),
+    "17":     (0,   165, 255),
+    "22":     (255, 0,   0),
+    "27":     (0,   0,   255),
+    "Center": (0,   255, 255),
+}
+DEFAULT_COLOUR = (255, 255, 255)
+
 # ── Log file ──────────────────────────────────────────────────
 LOG_FILE     = "/home/nathan/code/ur3e/ur_controller/results.csv"
 write_header = not os.path.exists(LOG_FILE)
 
-def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
+def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded, cam_error):
     global write_header
     with open(LOG_FILE, "a", newline="") as f:
         writer = csv.writer(f)
@@ -85,14 +96,16 @@ def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
             writer.writerow([
                 "platform", "height_mm", "tower", "axis", "error_mm",
                 "det_x", "det_y", "det_z",
-                "cmd_x", "cmd_y", "cmd_z", "timestamp"
+                "cmd_x", "cmd_y", "cmd_z",
+                "cam_error",
+                "timestamp"
             ])
             write_header = False
-
         writer.writerow([
             PLATFORM, height_mm, tower, axis, error_mm,
             detected_pos[0], detected_pos[1], detected_pos[2],
             commanded[0], commanded[1], commanded[2],
+            cam_error,
             time.strftime("%Y-%m-%d %H:%M:%S")
         ])
 
@@ -222,6 +235,11 @@ def detect_towers(n_frames=10):
             cls_name = model.names[int(box.cls)]
             if cls_name not in TOWERS:
                 continue
+
+            conf = float(box.conf[0])
+            if conf < CONFIDENCE_THRESHOLD:
+                continue
+
             cx = int((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
             cy = int((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
             z  = get_depth_at_pixel(depth_frame, cx, cy, window=5)
@@ -284,7 +302,7 @@ for height in TEST_HEIGHTS:
     
     # -20mm accounts for the offsets arising from
     # the tool extrusion
-    test_z = LOWEST_TOP_Z + height - 20
+    test_z = HIGHEST_TOP_Z + height - 20
 
     print(f"\n{'='*50}")
     print(f"Height: {height}mm above lowest tower  (Z={test_z:.2f}mm)")
@@ -356,7 +374,7 @@ for height in TEST_HEIGHTS:
                  ORI[0], ORI[1], ORI[2]], speed=SPEED)
         time.sleep(2)
         x_reading = float(input("    X dial gauge reading (mm): "))
-        log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x)
+        log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x, dx)
         print("    → Back to approach XY")
         move_to(APPROACH_XY, speed=SPEED)
 
@@ -370,7 +388,7 @@ for height in TEST_HEIGHTS:
                  ORI[0], ORI[1], ORI[2]], speed=SPEED)
         time.sleep(2)
         y_reading = float(input("    Y dial gauge reading (mm): "))
-        log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y)
+        log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y, dy)
         print("    → Back to approach XY")
         move_to(APPROACH_XY, speed=SPEED)
 
@@ -386,7 +404,7 @@ for height in TEST_HEIGHTS:
                  ORI[0], ORI[1], ORI[2]], speed=SPEED)
         time.sleep(2)
         z_reading = float(input("    Z dial gauge reading (mm): "))
-        log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z)
+        log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z, dz)
         print("    → Back to approach Z")
         move_to(APPROACH_Z, speed=SPEED)
         print("    → Back to safe Z")

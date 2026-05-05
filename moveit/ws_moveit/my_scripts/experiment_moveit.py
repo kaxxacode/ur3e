@@ -21,7 +21,7 @@ PLATFORM = "MoveIt2"
 WEIGHTS  = "/root/ws_moveit/best.pt"
 
 # Fixed orientation (quaternion x y z w)
-ORI_QUAT = [0.7126, -0.7017, 0.00574, 0.00898]  # x y z w
+ORI_QUAT = [0.7124, -0.7016, 0.0, 0.0025]  # x y z w
 
 # Positions in mm
 HOME_MM  = [81.0, -305.0, 383.0]
@@ -62,18 +62,18 @@ TOWER_KNOWN_POS = {
 # Tower class names for detection
 TOWERS = list(TOWER_KNOWN_POS.keys())
 
-# Lowest tower top Z in base frame (mm)
-LOWEST_TOP_Z = 68.0
+# Highest tower top Z in base frame (mm)
+HIGHEST_TOP_Z = 83.0
 
 # Test heights above lowest tower (mm) — 10cm to 30cm
 TEST_HEIGHTS = [100, 150, 200, 250, 300]
 
 # Camera offset from flange (mm)
-CAM_Z_OFFSET    = 15.0    # camera front glass is 15mm below flange
-EXT_LENGTH      = 35.0    # extrusion tip is 35mm below flange
+CAM_Z_OFFSET     = 15.0   # camera front glass is 15mm below flange
+EXT_LENGTH       = 35.0   # extrusion tip is 35mm below flange
 CAM_GLASS_OFFSET = 0.0037 # D405 optical centre is 3.7mm behind front glass (metres)
-                           # SDK reports Z from front glass; X/Y back-projection needs
-                           # Z from optical centre, so add this before back-projecting.
+                          # SDK reports Z from front glass; X/Y back-projection needs
+                          # Z from optical centre, so add this before back-projecting.
 
 # Speeds
 SPEED_SCALE_PROBE   = 0.05   # 50 mm/s   -> 50/1000
@@ -85,7 +85,7 @@ MAX_RETRIES  = 30
 RETRY_WAIT_S = 5.0
 
 # ── Detection settings (matching detect_towers.py) ────────────
-CONFIDENCE_THRESHOLD = 0.5
+CONFIDENCE_THRESHOLD = 0.7
 CLASS_COLOURS = {
     "12":     (0,   255, 0),
     "17":     (0,   165, 255),
@@ -99,7 +99,7 @@ DEFAULT_COLOUR = (255, 255, 255)
 LOG_FILE     = "/root/ws_moveit/my_scripts/results_moveit.csv"
 write_header = not os.path.exists(LOG_FILE)
 
-def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
+def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded, cam_error):
     global write_header
     with open(LOG_FILE, "a", newline="") as f:
         writer = csv.writer(f)
@@ -107,14 +107,16 @@ def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded):
             writer.writerow([
                 "platform", "height_mm", "tower", "axis", "error_mm",
                 "det_x", "det_y", "det_z",
-                "cmd_x", "cmd_y", "cmd_z", "timestamp"
+                "cmd_x", "cmd_y", "cmd_z",
+                "cam_error",
+                "timestamp"
             ])
             write_header = False
-
         writer.writerow([
             PLATFORM, height_mm, tower, axis, error_mm,
             detected_pos[0], detected_pos[1], detected_pos[2],
             commanded[0], commanded[1], commanded[2],
+            cam_error,
             time.strftime("%Y-%m-%d %H:%M:%S")
         ])
 
@@ -408,6 +410,11 @@ def detect_towers(n_frames=10):
             cls_name = model.names[int(box.cls)]
             if cls_name not in TOWERS:
                 continue
+
+            conf = float(box.conf[0])
+            if conf < CONFIDENCE_THRESHOLD:
+                continue
+
             cx = int((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
             cy = int((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
             z  = get_depth_at_pixel(depth_frame, cx, cy, window=5)
@@ -474,7 +481,7 @@ def main():
 
         # -20mm accounts for the offsets arising from
         # the tool extrusion
-        test_z = LOWEST_TOP_Z + height - 20
+        test_z = HIGHEST_TOP_Z + height - 20
 
         print(f"\n{'='*50}")
         print(f"Height: {height}mm above lowest tower  (Z={test_z:.2f}mm)")
@@ -549,7 +556,7 @@ def main():
             robot.move_to_mm([cmd_x[0], cmd_x[1], cmd_x[2]], speed_scale=SPEED_SCALE_PROBE)
             time.sleep(2.0)
             x_reading = float(input("    X dial gauge reading (mm): "))
-            log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x)
+            log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x, dx)
             print("    → Back to approach XY")
             robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
 
@@ -562,7 +569,7 @@ def main():
             robot.move_to_mm([cmd_y[0], cmd_y[1], cmd_y[2]], speed_scale=SPEED_SCALE_PROBE)
             time.sleep(2.0)
             y_reading = float(input("    Y dial gauge reading (mm): "))
-            log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y)
+            log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y, dy)
             print("    → Back to approach XY")
             robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
 
@@ -577,7 +584,7 @@ def main():
             robot.move_to_mm([cmd_z[0], cmd_z[1], cmd_z[2]], speed_scale=SPEED_SCALE_PROBE)
             time.sleep(2.0)
             z_reading = float(input("    Z dial gauge reading (mm): "))
-            log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z)
+            log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z, dz)
             print("    → Back to approach Z")
             robot.move_to_mm(APPROACH_Z_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Back to safe Z")
