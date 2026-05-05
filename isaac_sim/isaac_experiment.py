@@ -58,26 +58,26 @@ TOWER_KNOWN_POS = {
 # Tower class names for detection
 TOWERS = list(TOWER_KNOWN_POS.keys())
 
-# Lowest tower top Z in base frame (mm)
-LOWEST_TOP_Z = 68.0
+# Highest tower top Z in base frame (mm)
+HIGHEST_TOP_Z = 83.0
 
 # Test heights above lowest tower (mm) — 10cm to 30cm
-TEST_HEIGHTS = [115, 150, 200, 250, 300]
+TEST_HEIGHTS = [100, 150, 200, 250, 300]
 
 # Camera offset from flange (mm)
-CAM_Z_OFFSET     = 15.0    # camera front glass is 15 mm below flange
-EXT_LENGTH       = 35.0    # extrusion tip is 35 mm below flange
-CAM_GLASS_OFFSET = 0.0037  # D405 optical centre is 3.7 mm behind front glass (metres)
-                            # SDK reports Z from front glass; X/Y back-projection needs
-                            # Z from optical centre, so add this before back-projecting.
+CAM_Z_OFFSET     = 15.0   # camera front glass is 15 mm below flange
+EXT_LENGTH       = 35.0   # extrusion tip is 35 mm below flange
+CAM_GLASS_OFFSET = 0.0037 # D405 optical centre is 3.7 mm behind front glass (metres)
+                          # SDK reports Z from front glass; X/Y back-projection needs
+                          # Z from optical centre, so add this before back-projecting.
 
 # Speeds
 SPEED      = 0.05   # 50 mm/s — probe moves
 SPEED_HOME = 0.2    # 200 mm/s — home / transit moves
-ACCEL      = 1.2    # m/s²
+ACCEL      = 1.2    # m/s^2
 
-# Detection settings
-CONFIDENCE_THRESHOLD = 0.5
+# ── Detection settings (matching detect_towers.py) ────────────
+CONFIDENCE_THRESHOLD = 0.7
 CLASS_COLOURS = {
     "12":     (0,   255,   0),
     "17":     (0,   165, 255),
@@ -100,7 +100,7 @@ def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded, cam_er
                 "platform", "height_mm", "tower", "axis", "error_mm",
                 "det_x", "det_y", "det_z",
                 "cmd_x", "cmd_y", "cmd_z",
-                "cam_err_x", "cam_err_y", "cam_err_z",
+                "cam_error",
                 "timestamp"
             ])
             write_header = False
@@ -108,7 +108,7 @@ def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded, cam_er
             PLATFORM, height_mm, tower, axis, error_mm,
             detected_pos[0], detected_pos[1], detected_pos[2],
             commanded[0], commanded[1], commanded[2],
-            cam_error[0], cam_error[1], cam_error[2],
+            cam_error,
             time.strftime("%Y-%m-%d %H:%M:%S")
         ])
 
@@ -197,6 +197,7 @@ def show_live_feed(duration=15):
     key = input("  ENTER = continue, q = skip height: ").strip().lower()
     return key != 'q'
 
+# ── Tower detection ───────────────────────────────────────────
 def flush_pipeline(n=10):
     for _ in range(n):
         pipeline.wait_for_frames()
@@ -213,6 +214,7 @@ def get_depth_at_pixel(depth_frame, cx, cy, window=5):
     if len(depths) == 0:
         return 0
     return float(np.median(depths))
+
 
 def detect_towers(n_frames=10):
     flush_pipeline()
@@ -238,9 +240,11 @@ def detect_towers(n_frames=10):
             cls_name = model.names[int(box.cls)]
             if cls_name not in TOWERS:
                 continue
+
             conf = float(box.conf[0])
             if conf < CONFIDENCE_THRESHOLD:
                 continue
+
             cx = int((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
             cy = int((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
             z  = get_depth_at_pixel(depth_frame, cx, cy, window=5)
@@ -333,8 +337,9 @@ def main():
 
     for height in TEST_HEIGHTS:
 
-        # -20 mm accounts for the offsets arising from the tool extrusion
-        test_z = LOWEST_TOP_Z + height - 20
+        # -20mm accounts for the offsets arising from
+        # the tool extrusion
+        test_z = HIGHEST_TOP_Z + height - 20
 
         print(f"\n{'='*50}")
         print(f"Height: {height}mm above lowest tower  (Z={test_z:.2f}mm)")
@@ -386,8 +391,6 @@ def main():
             cmd_y = np.array([KNOWN_PROBE_Y[0], KNOWN_PROBE_Y[1] + dy, KNOWN_PROBE_Y[2]])
             cmd_z = np.array([KNOWN_PROBE_Z[0], KNOWN_PROBE_Z[1], KNOWN_PROBE_Z[2] + dz])
 
-            cam_error = np.array([dx, dy, dz])
-
             print(f"\n  Tower {tower_name}mm | detected: "
                   f"X={pt_base_mm[0]:.2f} Y={pt_base_mm[1]:.2f} "
                   f"Z={pt_base_mm[2]:.2f} mm")
@@ -408,7 +411,7 @@ def main():
                      ORI[0], ORI[1], ORI[2]], speed=SPEED)
             time.sleep(2)
             x_reading = float(input("    X dial gauge reading (mm): "))
-            log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x, cam_error)
+            log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x, dx)
             print("    → Back to approach XY")
             move_to(APPROACH_XY, speed=SPEED)
 
@@ -422,7 +425,7 @@ def main():
                      ORI[0], ORI[1], ORI[2]], speed=SPEED)
             time.sleep(2)
             y_reading = -float(input("    Y dial gauge reading (mm): "))
-            log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y, cam_error)
+            log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y, dy)
             print("    → Back to approach XY")
             move_to(APPROACH_XY, speed=SPEED)
 
@@ -438,7 +441,7 @@ def main():
                      ORI[0], ORI[1], ORI[2]], speed=SPEED)
             time.sleep(2)
             z_reading = -float(input("    Z dial gauge reading (mm): "))
-            log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z, cam_error)
+            log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z, dz)
             print("    → Back to approach Z")
             move_to(APPROACH_Z, speed=SPEED)
             print("    → Back to safe Z")
