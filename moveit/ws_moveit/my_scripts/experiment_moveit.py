@@ -81,8 +81,8 @@ SPEED_SCALE_TRANSIT = 0.20   # 200 mm/s  -> 200/1000
 ACCEL_SCALE         = 0.08   # 1.2 m/s^2 -> 1200/15000 (MoveIt uses mm/s^2)
 
 # Retry settings
-MAX_RETRIES  = 10
-RETRY_WAIT_S = 20.0
+MAX_RETRIES  = 30
+RETRY_WAIT_S = 5.0
 
 # ── Detection settings (matching detect_towers.py) ────────────
 CONFIDENCE_THRESHOLD = 0.5
