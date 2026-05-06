@@ -97,7 +97,7 @@ ACCEL_SCALE         = 0.08   # 1.2 m/s^2 -> 1200/15000 (MoveIt uses mm/s^2)
 MAX_RETRIES  = 30
 RETRY_WAIT_S = 5.0
 
-# ── Detection settings (matching detect_towers.py) ────────────
+# Detection settings
 CONFIDENCE_THRESHOLD = 0.7
 CLASS_COLOURS = {
     "12":     (0,   255, 0),
@@ -287,29 +287,6 @@ class MoveItController(Node):
         self.get_logger().info("Moving to home...")
         return self.move_to_mm(HOME_MM, speed_scale=SPEED_SCALE_TRANSIT)
 
-
-# ── Camera setup (matching detect_towers.py) ──────────────────
-pipeline = rs.pipeline()
-config = rs.config()
-config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 5)
-config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16,  5)
-profile = pipeline.start(config)
-
-intr  = (profile.get_stream(rs.stream.color)
-         .as_video_stream_profile().get_intrinsics())
-align = rs.align(rs.stream.color)
-
-# Flush 30 frames on startup — same as detect_towers.py
-print("[INFO] Flushing camera pipeline...")
-for _ in range(30):
-    pipeline.wait_for_frames()
-print("[OK]  D405 streaming at 1280x720")
-
-# ── YOLO ──────────────────────────────────────────────────────
-print(f"[INFO] Loading model: {WEIGHTS}")
-model = YOLO(WEIGHTS)
-print(f"[OK]  Model loaded. Classes: {list(model.names.values())}")
-
 # ── Live feed ─────────────────────────────────────────────────
 def show_live_feed(duration=15):
     print("  Live feed — SPACE to continue, Q to skip height")
@@ -360,7 +337,6 @@ def get_depth_at_pixel(depth_frame, cx, cy, window=5):
         return 0
     return float(np.median(depths))
 
-
 def draw_detections(frame, results):
     """Draw detections using same style as detect_towers.py."""
     detections = []
@@ -397,7 +373,6 @@ def draw_detections(frame, results):
                 "centre": (cx_box, cy_box),
             })
     return frame, detections
-
 
 def detect_towers(n_frames=10):
     flush_pipeline()
@@ -483,12 +458,36 @@ def camera_to_base(pt_cam, tcp_z_mm):
     base_z = camera_z_mm - pt_cam[2] * 1000 + EXT_LENGTH + Z_CONST_ERR
     return np.array([base_x, base_y, base_z])
 
-
 # ── Main ──────────────────────────────────────────────────────
 def main():
+    global pipeline, align, intr, model 
+
+    # Camera setup
+    pipeline = rs.pipeline()
+    config = rs.config()
+    config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 5)
+    config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16,  5)
+    profile = pipeline.start(config)
+
+    intr  = (profile.get_stream(rs.stream.color)
+            .as_video_stream_profile().get_intrinsics())
+    align = rs.align(rs.stream.color)
+
+    # Flush 30 frames on startup — same as detect_towers.py
+    print("[INFO] Flushing camera pipeline...")
+    for _ in range(30):
+        pipeline.wait_for_frames()
+    print("[OK]  D405 streaming at 1280x720")
+
+    # YOLO model
+    print(f"[INFO] Loading model: {WEIGHTS}")
+    model = YOLO(WEIGHTS)
+    print(f"[OK]  Model loaded. Classes: {list(model.names.values())}")
+
     rclpy.init()
     robot = MoveItController()
 
+    # Experiment loop
     print("\n" + "="*50)
     print(f"  EXPERIMENT — Platform: {PLATFORM}")
     print(f"  Log: {LOG_FILE}")

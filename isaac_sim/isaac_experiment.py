@@ -89,7 +89,7 @@ SPEED      = 0.05   # 50 mm/s — probe moves
 SPEED_HOME = 0.2    # 200 mm/s — home / transit moves
 ACCEL      = 1.2    # m/s^2
 
-# ── Detection settings (matching detect_towers.py) ────────────
+# Detection settings
 CONFIDENCE_THRESHOLD = 0.7
 CLASS_COLOURS = {
     "12":     (0,   255,   0),
@@ -228,7 +228,6 @@ def get_depth_at_pixel(depth_frame, cx, cy, window=5):
         return 0
     return float(np.median(depths))
 
-
 def detect_towers(n_frames=10):
     flush_pipeline()
     detections = {k: [] for k in TOWERS}
@@ -313,7 +312,6 @@ def camera_to_base(pt_cam, tcp_z_mm):
     base_z = camera_z_mm - pt_cam[2] * 1000 + EXT_LENGTH + Z_CONST_ERR
     return np.array([base_x, base_y, base_z])
 
-
 # ── Main ──────────────────────────────────────────────────────
 def main():
     global pipeline, align, intr, model, rtde_c, rtde_r
@@ -346,7 +344,7 @@ def main():
     model = YOLO(WEIGHTS)
     print(f"[OK]  Model loaded. Classes: {list(model.names.values())}")
 
-    # ── Experiment loop ───────────────────────────────────────
+    # Experiment loop
     print("\n" + "="*50)
     print(f"  EXPERIMENT — Platform: {PLATFORM}")
     print(f"  Log: {LOG_FILE}")
