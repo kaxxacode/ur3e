@@ -17,21 +17,21 @@ WEIGHTS  = "/home/user/ur_experiment/best.pt"
 ORI = [2.235, -2.201, 0.0]
 
 # Home position — camera 0,0 above part 0,0 at 30cm height
-HOME = [81.0, -305.0, 383.0, 2.235, -2.201, 0.0]
+HOME = [81.0, -305.0, 383.0, ORI[0], ORI[1], ORI[2]]
 
 # Observation X, Y (mm) — camera 0,0 above part 0,0
 OBS_X = HOME[0]
 OBS_Y = HOME[1]
 
 # Approach positions (mm, radians) — BASE FRAME
-APPROACH_XY = [114.31, -261.46,  93.41, 2.235, -2.201, 0.0]
-SAFE_Z      = [109.43, -255.09, 268.02, 2.235, -2.201, 0.0]
-APPROACH_Z  = [219.96, -335.28, 239.23, 2.235, -2.201, 0.0]
+APPROACH_XY = [114.31, -261.46,  93.41, ORI[0], ORI[1], ORI[2]]
+SAFE_Z      = [109.43, -255.09, 268.02, ORI[0], ORI[1], ORI[2]]
+APPROACH_Z  = [219.96, -335.28, 239.23, ORI[0], ORI[1], ORI[2]]
 
 # Known zero positions in base frame (mm, radians)
-PROBE_X = [142.78, -261.45,  93.42, 2.235, -2.201, 0.0]
-PROBE_Y = [114.31, -276.97,  93.40, 2.235, -2.201, 0.0]
-PROBE_Z = [219.97, -335.28, 216.91, 2.235, -2.201, 0.0]
+PROBE_X = [142.78, -261.45,  93.42, ORI[0], ORI[1], ORI[2]]
+PROBE_Y = [114.31, -276.97,  93.40, ORI[0], ORI[1], ORI[2]]
+PROBE_Z = [219.97, -335.28, 216.91, ORI[0], ORI[1], ORI[2]]
 
 # Known probe positions in base frame (mm)
 KNOWN_PROBE_X = np.array([142.78, -261.45,  93.42])

@@ -16,7 +16,7 @@ WEIGHTS  = "/home/user/ur_experiment/best.pt"
 ORI = [2.235, -2.201, 0.0]
 
 # Home position
-HOME = [81.0, -305.0, 383.0, 2.235, -2.201, 0.0]
+HOME = [81.0, -305.0, 383.0, ORI[0], ORI[1], ORI[2]]
 
 # Observation X, Y (mm) — camera 0,0 above part 0,0
 OBS_X = HOME[0]
