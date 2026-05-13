@@ -3,3 +3,5 @@ best.pt
 best.pt:Zone.Identifier
 dataset
 results.csv
+vision_errors0605.csv
+vision_errors.csv

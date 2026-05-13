@@ -7,24 +7,30 @@ import os
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
-from moveit_msgs.action import MoveGroup
+from moveit_msgs.action import MoveGroup, ExecuteTrajectory
 from moveit_msgs.msg import (
     MotionPlanRequest, Constraints,
     PositionConstraint, OrientationConstraint, BoundingVolume,
+    RobotState,
 )
+from moveit_msgs.srv import GetCartesianPath
 from geometry_msgs.msg import PoseStamped, Vector3
 from shape_msgs.msg import SolidPrimitive
+from sensor_msgs.msg import JointState
+from moveit_msgs.msg import CollisionObject, PlanningScene
+from shape_msgs.msg import SolidPrimitive as SP
+from geometry_msgs.msg import Pose
 from ultralytics import YOLO
 
 # ── Configuration ─────────────────────────────────────────────
 PLATFORM = "MoveIt2"
-WEIGHTS  = "/root/ws_moveit/best.pt"
+WEIGHTS  = "best.pt"
 
 # Fixed orientation (quaternion x y z w)
-ORI_QUAT = [0.7124, -0.7016, 0.0, 0.0025]  # x y z w
+ORI_QUAT = [0.003731, -0.703023, 0.711122, -0.007108]  # tool0 in base frame  # x y z w
 
 # Positions in mm
-HOME_MM  = [81.0, -305.0, 383.0]
+HOME_MM = [81.0, -305.0, 355.0]
 
 # Observation X, Y (mm) — camera 0,0 above part 0,0
 OBS_X = HOME_MM[0]
@@ -95,7 +101,7 @@ ACCEL_SCALE         = 0.08   # 1.2 m/s^2 -> 1200/15000 (MoveIt uses mm/s^2)
 
 # Retry settings
 MAX_RETRIES  = 30
-RETRY_WAIT_S = 20.0
+RETRY_WAIT_S = 5.0
 
 # Detection settings
 CONFIDENCE_THRESHOLD = 0.7
@@ -109,7 +115,7 @@ CLASS_COLOURS = {
 DEFAULT_COLOUR = (255, 255, 255)
 
 # ── Log file ──────────────────────────────────────────────────
-LOG_FILE     = "/root/ws_moveit/my_scripts/results_moveit.csv"
+LOG_FILE     = "results_moveit.csv"
 write_header = not os.path.exists(LOG_FILE)
 
 def log_result(height_mm, tower, axis, error_mm, detected_pos, commanded, cam_error):
@@ -147,12 +153,31 @@ class MoveItController(Node):
             10
         )
 
+        self._joint_state = None
+        self.create_subscription(
+            JointState,
+            "/joint_states",
+            self._joint_state_cb,
+            10
+        )
+
+        self._cartesian_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
+        self._execute_client = ActionClient(self, ExecuteTrajectory, '/execute_trajectory')
+
         self.get_logger().info("Waiting for MoveGroup action server...")
         self._action_client.wait_for_server()
+        self._cartesian_client.wait_for_service()
+        self._execute_client.wait_for_server()
         self.get_logger().info("MoveGroup action server ready.")
+        self._scene_pub = self.create_publisher(PlanningScene, '/planning_scene', 10)
+        time.sleep(0.5)
+        self._add_obstacles()
 
     def _tcp_cb(self, msg):
         self._tcp_pose = msg
+
+    def _joint_state_cb(self, msg):
+        self._joint_state = msg
 
     def get_tcp_z(self):
         self._tcp_pose = None
@@ -185,6 +210,12 @@ class MoveItController(Node):
         req.allowed_planning_time = 10.0
         req.max_velocity_scaling_factor = max_velocity_scaling
         req.max_acceleration_scaling_factor = ACCEL_SCALE
+
+        # Seed IK from current joint state to prevent mirrored arm solutions
+        if self._joint_state is not None:
+            start_state = RobotState()
+            start_state.joint_state = self._joint_state
+            req.start_state = start_state
 
         target = PoseStamped()
         target.header.frame_id = "base"
@@ -224,6 +255,137 @@ class MoveItController(Node):
         req.goal_constraints = [goal_con]
 
         return req
+
+    def _add_obstacles(self):
+        """Add floor and back wall to prevent wild planning paths."""
+        scene = PlanningScene()
+        scene.is_diff = True
+
+        # Floor — 2m x 2m slab 10mm below robot base
+        floor = CollisionObject()
+        floor.header.frame_id = "base_link"
+        floor.id = "floor"
+        floor_shape = SP()
+        floor_shape.type = SP.BOX
+        floor_shape.dimensions = [2.0, 2.0, 0.02]
+        floor_pose = Pose()
+        floor_pose.position.z = -0.11
+        floor_pose.orientation.w = 1.0
+        floor.primitives = [floor_shape]
+        floor.primitive_poses = [floor_pose]
+        floor.operation = CollisionObject.ADD
+
+        # Back wall — behind robot (negative X in base_link)
+        wall = CollisionObject()
+        wall.header.frame_id = "base_link"
+        wall.id = "back_wall"
+        wall_shape = SP()
+        wall_shape.type = SP.BOX
+        wall_shape.dimensions = [0.02, 2.0, 2.0]
+        wall_pose = Pose()
+        wall_pose.position.x = -0.3
+        wall_pose.position.z = 0.5
+        wall_pose.orientation.w = 1.0
+        wall.primitives = [wall_shape]
+        wall.primitive_poses = [wall_pose]
+        wall.operation = CollisionObject.ADD
+
+        scene.world.collision_objects = [floor, wall]
+        self._scene_pub.publish(scene)
+        self.get_logger().info("Obstacles added: floor + back wall")
+        time.sleep(0.5)
+
+    def move_linear_mm(self, pos_mm, speed_scale=SPEED_SCALE_PROBE):
+        """Straight-line Cartesian move using compute_cartesian_path."""
+        # Spin to ensure we have a fresh joint state before planning
+        deadline = time.time() + 3.0
+        while self._joint_state is None and time.time() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if self._joint_state is None:
+            self.get_logger().warn("No joint state received after 3s — path may be wrong")
+
+        x_m = pos_mm[0] / 1000.0
+        y_m = pos_mm[1] / 1000.0
+        z_m = pos_mm[2] / 1000.0
+
+        self.get_logger().info(
+            f"  Linear move to X={pos_mm[0]:.2f} Y={pos_mm[1]:.2f} Z={pos_mm[2]:.2f} mm"
+        )
+
+        target = PoseStamped()
+        target.header.frame_id = "base"
+        target.pose.position.x = x_m
+        target.pose.position.y = y_m
+        target.pose.position.z = z_m
+        target.pose.orientation.x = ORI_QUAT[0]
+        target.pose.orientation.y = ORI_QUAT[1]
+        target.pose.orientation.z = ORI_QUAT[2]
+        target.pose.orientation.w = ORI_QUAT[3]
+
+        req = GetCartesianPath.Request()
+        req.header.frame_id = "base"
+        req.link_name = "tool0"
+        req.group_name = "ur_manipulator"
+        req.waypoints = [target.pose]
+        req.max_step = 0.01
+        req.jump_threshold = 5.0
+        req.avoid_collisions = True
+        # Pass current joint state to seed IK — fixes empty JointState error
+        if self._joint_state is not None:
+            start_state = RobotState()
+            start_state.joint_state = self._joint_state
+            req.start_state = start_state
+
+        future = self._cartesian_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        response = future.result()
+
+        if response.fraction < 0.5:
+            self.get_logger().error(
+                f"  Cartesian path only {response.fraction*100:.1f}% complete — move failed"
+            )
+            return False
+
+        # Time parameterization — compute timing from joint distances and speed
+        trajectory = response.solution.joint_trajectory
+        MAX_JOINT_VEL = 3.14 * max(speed_scale, 0.02)
+
+        trajectory.points[0].time_from_start.sec = 0
+        trajectory.points[0].time_from_start.nanosec = 0
+        trajectory.points[0].velocities = [0.0] * len(trajectory.points[0].positions)
+        trajectory.points[0].accelerations = [0.0] * len(trajectory.points[0].positions)
+
+        total_time = 0.0
+        for i in range(1, len(trajectory.points)):
+            curr = trajectory.points[i]
+            prev = trajectory.points[i - 1]
+            time_needed = 0.0
+            for j in range(len(curr.positions)):
+                dist = abs(curr.positions[j] - prev.positions[j])
+                time_needed = max(time_needed, dist / MAX_JOINT_VEL)
+            time_needed = max(time_needed, 0.01)
+            total_time += time_needed
+            curr.time_from_start.sec = int(total_time)
+            curr.time_from_start.nanosec = int((total_time % 1) * 1e9)
+            curr.velocities = [0.0] * len(curr.positions)
+            curr.accelerations = [0.0] * len(curr.positions)
+
+        exec_goal = ExecuteTrajectory.Goal()
+        exec_goal.trajectory.joint_trajectory = trajectory
+
+        # Execute the trajectory
+        # exec_goal already created above
+        exec_future = self._execute_client.send_goal_async(exec_goal)
+        rclpy.spin_until_future_complete(self, exec_future)
+        result_future = exec_future.result().get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+        ec = result_future.result().result.error_code.val
+        if ec == 1:
+            self.get_logger().info("  Linear move succeeded")
+            return True
+        else:
+            self.get_logger().error(f"  Linear move execution failed: {ec}")
+            return False
 
     def move_to_mm(self, pos_mm, speed_scale=SPEED_SCALE_PROBE):
         """Move to position in mm with automatic retry on driver drop."""
@@ -285,7 +447,7 @@ class MoveItController(Node):
 
     def go_home(self):
         self.get_logger().info("Moving to home...")
-        return self.move_to_mm(HOME_MM, speed_scale=SPEED_SCALE_TRANSIT)
+        return self.move_linear_mm(HOME_MM, speed_scale=SPEED_SCALE_TRANSIT)
 
 # ── Live feed ─────────────────────────────────────────────────
 def show_live_feed(duration=15):
@@ -507,7 +669,7 @@ def main():
         print(f"{'='*50}")
 
         # Move to observation position
-        robot.move_to_mm([OBS_X, OBS_Y, test_z], speed_scale=SPEED_SCALE_TRANSIT)
+        robot.move_linear_mm([OBS_X, OBS_Y, test_z], speed_scale=SPEED_SCALE_TRANSIT)
         time.sleep(2.0)
 
         # Show live feed
@@ -568,46 +730,46 @@ def main():
 
             # ── X axis ────────────────────────────────────────
             print("    → Approach XY")
-            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Probe X zero position")
-            robot.move_to_mm(PROBE_X_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(PROBE_X_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Offset X position")
-            robot.move_to_mm([cmd_x[0], cmd_x[1], cmd_x[2]], speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm([cmd_x[0], cmd_x[1], cmd_x[2]], speed_scale=SPEED_SCALE_PROBE)
             time.sleep(2.0)
             x_reading = float(input("    X dial gauge reading (mm): "))
             log_result(height, tower_name, "X", x_reading, pt_base_mm, cmd_x, dx)
             print("    → Back to approach XY")
-            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
 
             # ── Y axis ────────────────────────────────────────
             print("    → Approach XY")
-            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Probe Y zero position")
-            robot.move_to_mm(PROBE_Y_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(PROBE_Y_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Offset Y position")
-            robot.move_to_mm([cmd_y[0], cmd_y[1], cmd_y[2]], speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm([cmd_y[0], cmd_y[1], cmd_y[2]], speed_scale=SPEED_SCALE_PROBE)
             time.sleep(2.0)
             y_reading = -float(input("    Y dial gauge reading (mm): "))
             log_result(height, tower_name, "Y", y_reading, pt_base_mm, cmd_y, dy)
             print("    → Back to approach XY")
-            robot.move_to_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(APPROACH_XY_MM, speed_scale=SPEED_SCALE_PROBE)
 
             # ── Z axis ────────────────────────────────────────
             print("    → Safe Z intermediate")
-            robot.move_to_mm(SAFE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(SAFE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Approach Z")
-            robot.move_to_mm(APPROACH_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(APPROACH_Z_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Probe Z zero position")
-            robot.move_to_mm(PROBE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(PROBE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Offset Z position")
-            robot.move_to_mm([cmd_z[0], cmd_z[1], cmd_z[2]], speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm([cmd_z[0], cmd_z[1], cmd_z[2]], speed_scale=SPEED_SCALE_PROBE)
             time.sleep(2.0)
             z_reading = -float(input("    Z dial gauge reading (mm): "))
             log_result(height, tower_name, "Z", z_reading, pt_base_mm, cmd_z, dz)
             print("    → Back to approach Z")
-            robot.move_to_mm(APPROACH_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(APPROACH_Z_MM, speed_scale=SPEED_SCALE_PROBE)
             print("    → Back to safe Z")
-            robot.move_to_mm(SAFE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
+            robot.move_linear_mm(SAFE_Z_MM, speed_scale=SPEED_SCALE_PROBE)
 
         print(f"\n  Height {height}mm complete — returning home")
         robot.go_home()

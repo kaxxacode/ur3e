@@ -298,7 +298,7 @@ for height in TEST_HEIGHTS:
 
     obs_pos = [OBS_X, OBS_Y, test_z, ORI[0], ORI[1], ORI[2]]
     move_to(obs_pos, speed=SPEED_HOME)
-    time.sleep(1)
+    time.sleep(2)
 
     if not show_live_feed(duration=15):
         print(f"  Height {height}mm skipped")
