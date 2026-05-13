@@ -27,8 +27,8 @@ ORI_QUAT = [0.7124, -0.7016, 0.0, 0.0025]  # x y z w
 HOME_MM  = [81.0, -305.0, 383.0]
 
 # Observation X, Y (mm) — camera 0,0 above part 0,0
-OBS_X = HOME[0]
-OBS_Y = HOME[1]
+OBS_X = HOME_MM[0]
+OBS_Y = HOME_MM[1]
 
 # Approach positions (mm) — BASE FRAME
 APPROACH_XY_MM = [114.31,  -261.46,  93.41]
@@ -95,7 +95,7 @@ ACCEL_SCALE         = 0.08   # 1.2 m/s^2 -> 1200/15000 (MoveIt uses mm/s^2)
 
 # Retry settings
 MAX_RETRIES  = 30
-RETRY_WAIT_S = 5.0
+RETRY_WAIT_S = 20.0
 
 # Detection settings
 CONFIDENCE_THRESHOLD = 0.7
